@@ -7,6 +7,7 @@ import '../../common.dart';
 import '../../common/widgets/chat_page.dart';
 import '../../models/platform_model.dart';
 import '../../models/state_model.dart';
+import '../../custom_ui/mobile/uu_mobile_home.dart';
 import 'connection_page.dart';
 
 abstract class PageShape extends Widget {
@@ -61,6 +62,11 @@ class HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (isIOS &&
+        !bind.isIncomingOnly() &&
+        bind.mainGetLocalOption(key: 'custom-ui') != 'N') {
+      return const UuMobileHome();
+    }
     return WillPopScope(
         onWillPop: () async {
           if (_selectedIndex != 0) {

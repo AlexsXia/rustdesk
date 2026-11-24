@@ -1,0 +1,12 @@
+services:
+  account-api:
+    build: .
+    container_name: rustdesk-account-api
+    restart: unless-stopped
+    ports:
+      - "21114:21114"
+    volumes:
+      - ./data:/data
+    environment:
+      ACCOUNT_BIND: 0.0.0.0:21114
+      ACCOUNT_DB: /data/account.db

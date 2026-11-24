@@ -58,10 +58,17 @@ class MainFlutterWindow: NSWindow {
     override func awakeFromNib() {
         rustdesk_core_main();
         _ = MainFlutterWindow.fullscreenObserver
+        self.styleMask.insert(.fullSizeContentView)
+        self.titlebarAppearsTransparent = true
+        self.titleVisibility = .hidden
+        self.isMovableByWindowBackground = true
         let flutterViewController = FlutterViewController.init()
         let windowFrame = self.frame
         self.contentViewController = flutterViewController
         self.setFrame(windowFrame, display: true)
+        self.contentView?.frame = NSRect(origin: .zero, size: self.frame.size)
+        self.contentView?.autoresizingMask = [.width, .height]
+        print("[RDStyle] awake mask=\(self.styleMask.rawValue) full=\(self.styleMask.contains(.fullSizeContentView)) frame=\(self.frame) content=\(self.contentView?.frame ?? .zero) layout=\(self.contentLayoutRect)")
         // register self method handler
         let registrar = flutterViewController.registrar(forPlugin: "RustDeskPlugin")
         setMethodHandler(registrar: registrar)
@@ -92,7 +99,19 @@ class MainFlutterWindow: NSWindow {
 
     override public func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
         super.order(place, relativeTo: otherWin)
+        print("[RDStyle] order mask=\(self.styleMask.rawValue) full=\(self.styleMask.contains(.fullSizeContentView)) transparent=\(self.titlebarAppearsTransparent) visibility=\(self.titleVisibility.rawValue) frame=\(self.frame) content=\(self.contentView?.frame ?? .zero) layout=\(self.contentLayoutRect)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.dumpView(self.contentView, 0)
+        }
         hiddenWindowAtLaunch()
+    }
+
+    private func dumpView(_ view: NSView?, _ depth: Int) {
+        guard let view = view, depth < 5 else { return }
+        print("[RDView] depth=\(depth) class=\(type(of: view)) frame=\(view.frame) bounds=\(view.bounds)")
+        for sub in view.subviews {
+            dumpView(sub, depth + 1)
+        }
     }
 
     /// Override window theme.

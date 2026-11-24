@@ -526,7 +526,9 @@ class _DesktopTabState extends State<DesktopTab>
     return Column(children: [
       Obx(() {
         if (stateGlobal.showTabBar.isTrue &&
-            !(kUseCompatibleUiMode && isHideSingleItem())) {
+            !(kUseCompatibleUiMode && isHideSingleItem()) &&
+            !(bind.mainGetLocalOption(key: 'custom-ui') != 'N' &&
+                state.value.selectedTabInfo.key == kTabLabelHomePage)) {
           final showBottomDivider = _showTabBarBottomDivider(tabType);
           return SizedBox(
             height: _kTabBarHeight,

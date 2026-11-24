@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rustdesk.refresh</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/project/rustdesk/scripts/ios_refresh.sh</string>
+    </array>
+    <!-- 每 6 小时检查一次，手机在线且快到期时才真正续签 -->
+    <key>StartInterval</key>
+    <integer>21600</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/alex/Library/Logs/rustdesk-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alex/Library/Logs/rustdesk-refresh.log</string>
+</dict>
+</plist>
