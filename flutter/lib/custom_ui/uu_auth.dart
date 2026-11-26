@@ -68,6 +68,68 @@ Future<Map<String, dynamic>> uuAuthRequest({
     key: 'user_info',
     value: jsonEncode(data['user'] ?? const <String, dynamic>{}),
   );
+  await uuApplyDeviceSecret(data['device_secret']?.toString() ?? '');
   gFFI.userModel.refreshCurrentUser();
   return data;
+}
+
+/// Mirrors the account-wide device secret into this device's permanent password.
+/// Every device of the account does the same, which is what lets peers of the
+/// same account connect without a password prompt.
+Future<void> uuApplyDeviceSecret(String secret) async {
+  if (secret.isEmpty) {
+    return;
+  }
+  if (bind.mainGetLocalOption(key: 'uu-device-secret') == secret) {
+    return;
+  }
+  final applied =
+      await bind.mainSetPermanentPasswordWithResult(password: secret);
+  if (!applied) {
+    return;
+  }
+  await bind.mainSetLocalOption(key: 'uu-device-secret', value: secret);
+}
+
+/// Fetches the account device secret for an already signed-in session and applies
+/// it, so devices signed in before this feature shipped pick it up without a
+/// re-login. Silent no-op when signed out or on errors.
+Future<void> uuSyncDeviceSecret() async {
+  final token = bind.mainGetLocalOption(key: 'access_token');
+  if (token.isEmpty) {
+    return;
+  }
+  final apiServer = await bind.mainGetApiServer();
+  if (apiServer.isEmpty) {
+    return;
+  }
+  Object deviceInfo = const <String, dynamic>{};
+  try {
+    deviceInfo = jsonDecode(bind.mainGetLoginDeviceInfo());
+  } catch (_) {}
+  Object? decoded;
+  try {
+    final resp = await http.post(
+      Uri.parse('$apiServer/api/currentUser'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'id': await bind.mainGetMyId(),
+        'uuid': await bind.mainGetUuid(),
+        'deviceInfo': deviceInfo,
+      }),
+    );
+    if (resp.statusCode != 200) {
+      return;
+    }
+    decoded = jsonDecode(decode_http_response(resp));
+  } catch (_) {
+    return;
+  }
+  if (decoded is! Map<String, dynamic>) {
+    return;
+  }
+  await uuApplyDeviceSecret(decoded['device_secret']?.toString() ?? '');
 }

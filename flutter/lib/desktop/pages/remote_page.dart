@@ -19,6 +19,7 @@ import '../../models/input_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/shortcut_model.dart';
 import '../../common/shared_state.dart';
+import '../../custom_ui/uu_wallpaper.dart';
 import '../../utils/image.dart';
 import '../widgets/remote_toolbar.dart';
 import '../widgets/kb_layout_type_chooser.dart';
@@ -124,6 +125,8 @@ class _RemotePageState extends State<RemotePage>
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
   Timer? _pointerLockCenterDebounceTimer;
 
+  Timer? _uuWallpaperTimer;
+
   // We need `_instanceIdOnEnterOrLeaveImage4Toolbar` together with `_onEnterOrLeaveImage4Toolbar`
   // to identify the toolbar instance and its callback function.
   int? _instanceIdOnEnterOrLeaveImage4Toolbar;
@@ -176,6 +179,11 @@ class _RemotePageState extends State<RemotePage>
             tabController: widget.tabController,
             toolbarState: widget.toolbarState);
         registerToolbarShortcuts(context, widget.id, _ffi);
+        if (bind.mainGetLocalOption(key: 'custom-ui') != 'N') {
+          _uuWallpaperTimer?.cancel();
+          _uuWallpaperTimer =
+              Timer(const Duration(seconds: 2), _saveUuWallpaper);
+        }
       }
     });
     _ffi.canvasModel.initializeEdgeScrollFallback(this);
@@ -650,6 +658,12 @@ class _RemotePageState extends State<RemotePage>
     }
   }
 
+  void _saveUuWallpaper() {
+    final image = _ffi.imageModel.image?.clone();
+    if (image == null) return;
+    unawaited(saveUuWallpaper(widget.id, image).whenComplete(image.dispose));
+  }
+
   @override
   Future<void> dispose() async {
     final closeSession = closeSessionOnDispose.remove(widget.id) ?? true;
@@ -672,6 +686,7 @@ class _RemotePageState extends State<RemotePage>
 
     _pointerLockCenterDebounceTimer?.cancel();
     _pointerLockCenterDebounceTimer = null;
+    _uuWallpaperTimer?.cancel();
     _waylandKeyboardModeWorker?.dispose();
     // Clear callback reference to prevent memory leaks and stale references
     _ffi.inputModel.onRelativeMouseModeDisabled = null;

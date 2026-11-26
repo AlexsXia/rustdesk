@@ -18,8 +18,11 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme.dart';
+import '../uu_auth.dart';
 import '../uu_login_dialog.dart';
 import '../uu_peer.dart';
+import '../uu_settings_dialog.dart';
+import '../uu_wallpaper.dart';
 
 class UuHomePage extends StatefulWidget {
   const UuHomePage({super.key});
@@ -53,6 +56,7 @@ class _UuHomePageState extends State<UuHomePage> {
     super.initState();
     _heroImage = bind.mainGetLocalOption(key: 'custom-hero-image');
     bind.mainLoadRecentPeers();
+    unawaited(uuSyncDeviceSecret());
     _initOnlineTracking();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
@@ -192,6 +196,19 @@ class _UuHomePageState extends State<UuHomePage> {
   }) {
     if (peer.id == _demoId) {
       showToast('演示设备仅用于界面预览，请添加真实设备');
+      return;
+    }
+    final secret = _inAddressBook(peer) ? uuAccountDevicePassword() : '';
+    if (secret.isNotEmpty) {
+      unawaited(connect(
+        context,
+        peer.id,
+        password: secret,
+        isFileTransfer: isFileTransfer,
+        isTerminal: isTerminal,
+        isTcpTunneling: isTcpTunneling,
+        isViewCamera: isViewCamera,
+      ));
       return;
     }
     connectInPeerTab(
@@ -1300,7 +1317,7 @@ class _UuHomePageState extends State<UuHomePage> {
   }
 
   Future<void> _showSettingsDialog() async {
-    DesktopSettingPage.switch2page(SettingsTabKey.general);
+    await showUuSettingsDialog(context);
   }
 
   Future<void> _showAboutDialog() async {
@@ -1596,8 +1613,8 @@ class _UuHomePageState extends State<UuHomePage> {
           ),
           _HoverCircle(
             icon: Icons.monitor_outlined,
-            onTap: () =>
-                DesktopSettingPage.switch2page(SettingsTabKey.display),
+            onTap: () => showUuSettingsDialog(
+                context, initialTab: SettingsTabKey.display),
           ),
           const SizedBox(width: 8),
           Stack(
@@ -1773,6 +1790,12 @@ class _UuHomePageState extends State<UuHomePage> {
                 Icons.desktop_windows,
                 size: 310,
                 color: Colors.white.withOpacity(0.10),
+              ),
+            ),
+            Positioned.fill(
+              child: UuWallpaperLayer(
+                peerId: peer.id,
+                fallback: const SizedBox.shrink(),
               ),
             ),
             const Positioned.fill(

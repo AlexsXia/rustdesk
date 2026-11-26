@@ -20,9 +20,14 @@ UU 风格客户端使用的自建账号服务：注册、登录、设备自动�
 | `POST /api/heartbeat` | 设备心跳，更新最后在线时间 |
 | `POST /api/sysinfo` | 设备信息（主机名 / 系统 / 用户名）更新 |
 | `GET /api/users`、`GET /api/peers` | 供客户端设备分组面板使用 |
+| `GET /api/keymap/profiles` | 按键映射方案列表（自己的 + 他人公开的） |
+| `POST /api/keymap/profiles` | 新增 / 更新自己的按键方案 |
+| `DELETE /api/keymap/profiles/{id}` | 删除自己的按键方案 |
 | `GET /api/health` | 健康检查 |
 
 设备在每次登录、`/api/currentUser` 时自动绑定到账号，并合并进该账号的地址簿；同一账号的其它客户端登录后即可看到全部设备。在线状态由 hbbs 的 `OnlineRequest`（21115 端口）直接提供，无需账号服务参与。
+
+`/api/login`、`/api/register` 与 `/api/currentUser` 还会返回该账号的 `device_secret`。客户端把它同步为本机的固定密码，连接同账号设备时自动携带，因此登录同一账号的设备之间可以免密直连。该值等价于设备密码，只应存放在自建服务上。
 
 ## 本地运行
 
@@ -80,7 +85,7 @@ docker compose up -d
 
 ## 安全说明
 
-默认通过 HTTP（21114）直连，登录密码与 token 在网络上是明文传输。个人 / 小范围使用可以接受；如果要长期暴露在公网，建议在前面加一层 HTTPS 反向代理（并让客户端把 API 服务器设为对应的 https 地址）。服务端密码以 Argon2 加盐哈希存储，token 为 32 字节随机值。
+默认通过 HTTP（21114）直连，登录密码、token 与 `device_secret` 在网络上是明文传输；拿到 token 或 `device_secret` 的人可以登录账号或直连账号下的设备。个人 / 小范围使用可以接受；如果要长期暴露在公网，建议在前面加一层 HTTPS 反向代理（并让客户端把 API 服务器设为对应的 https 地址）。服务端密码以 Argon2 加盐哈希存储，token 与 `device_secret` 均为 32 字节随机值。
 
 ## 客户端默认值
 

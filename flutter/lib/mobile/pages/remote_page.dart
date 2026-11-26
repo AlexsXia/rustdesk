@@ -21,6 +21,16 @@ import '../../common/widgets/remote_input.dart';
 import '../../models/input_model.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
+import '../../custom_ui/mobile/uu_keyboard_panel.dart';
+import '../../custom_ui/mobile/uu_keymap_editor.dart';
+import '../../custom_ui/mobile/uu_keymap_overlay.dart';
+import '../../custom_ui/mobile/uu_mini_window.dart';
+import '../../custom_ui/mobile/uu_pip.dart';
+import '../../custom_ui/mobile/uu_session_panel.dart';
+import '../../custom_ui/mobile/uu_session_toolbar.dart';
+import '../../custom_ui/uu_keymap.dart';
+import '../../custom_ui/uu_session_intent.dart';
+import '../../custom_ui/uu_wallpaper.dart';
 import '../../models/shortcut_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
@@ -74,7 +84,8 @@ class RemotePage extends StatefulWidget {
       this.loginMethod = '',
       this.password,
       this.isSharedPassword,
-      this.forceRelay})
+      this.forceRelay,
+      this.initialViewOnly = false})
       : super(key: key);
 
   final String id;
@@ -82,6 +93,7 @@ class RemotePage extends StatefulWidget {
   final String? password;
   final bool? isSharedPassword;
   final bool? forceRelay;
+  final bool initialViewOnly;
 
   @override
   State<RemotePage> createState() => _RemotePageState(id);
@@ -95,6 +107,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
   Timer? _iosKeyboardWorkaroundTimer;
+  Timer? _uuWallpaperTimer;
 
   final _blockableOverlayState = BlockableOverlayState();
 
@@ -103,12 +116,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  var _uuPcKeyboard = false;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
 
   InputModel get inputModel => gFFI.inputModel;
   SessionID get sessionId => gFFI.sessionId;
+  late final bool _uuCustomUi =
+      bind.mainGetLocalOption(key: 'custom-ui') != 'N';
 
   final TextEditingController _textController =
       TextEditingController(text: initText);
@@ -166,6 +182,17 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         _registerMobileChatShortcut();
         registerToolbarShortcuts(context, widget.id, gFFI);
       }
+      if (widget.initialViewOnly) {
+        bind.sessionToggleOption(
+            sessionId: gFFI.sessionId, value: kOptionToggleViewOnly);
+        gFFI.ffiModel.setViewOnly(widget.id, true);
+      }
+      UuSessionIntent.runIfPending(peerId);
+      if (_uuCustomUi) {
+        _uuWallpaperTimer?.cancel();
+        _uuWallpaperTimer =
+            Timer(const Duration(seconds: 2), _saveUuWallpaper);
+      }
     });
     WidgetsBinding.instance.addObserver(this);
 
@@ -188,6 +215,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Future<void> dispose() async {
     HardwareKeyboard.instance.removeHandler(_handleLocalKeyEvent);
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(UuPip.instance.stop());
     // Close the session up-front. `gFFI.close()` below only calls `sessionClose`
     // after several awaits (canvas save, image update, the `enable_soft_keyboard`
     // platform call), so if the app is backgrounded while this page is disposing,
@@ -211,9 +239,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await gFFI.close();
     _timer?.cancel();
     _iosKeyboardWorkaroundTimer?.cancel();
+    _uuWallpaperTimer?.cancel();
     gFFI.dialogManager.dismissAll();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: SystemUiOverlay.values);
+    await SystemChrome.setPreferredOrientations(const []);
     WakelockManager.disable(_uniqueKey);
     await keyboardSubscription.cancel();
     removeSharedStates(widget.id);
@@ -227,6 +257,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       trySyncClipboard();
+      // 回到 App 后把画中画收回全屏远控页。
+      UuPip.instance.stop();
     }
   }
 
@@ -482,6 +514,73 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
+  void _openUuKeyboard() {
+    _openUuImeKeyboard();
+  }
+
+  void _saveUuWallpaper() {
+    final image = gFFI.imageModel.image?.clone();
+    if (image == null) return;
+    unawaited(saveUuWallpaper(widget.id, image).whenComplete(image.dispose));
+  }
+
+  Future<void> _editUuKeymap() async {
+    final profile = uuActiveKeyProfile();
+    if (profile == null) {
+      showToast('请先选择按键方案');
+      return;
+    }
+    final changed = await openUuKeymapEditor(context, gFFI, profile);
+    if (!changed || !mounted) return;
+    setState(() {});
+    uuKeymapRevision.value++;
+  }
+
+  void _openUuImeKeyboard() {
+    if (_uuPcKeyboard) setState(() => _uuPcKeyboard = false);
+    openKeyboard();
+  }
+
+  void _openUuPcKeyboard() {
+    setState(() {
+      _uuPcKeyboard = true;
+      _showEdit = false;
+    });
+    gFFI.invokeMethod("enable_soft_keyboard", false);
+    _mobileFocusNode.unfocus();
+    _physicalFocusNode.requestFocus();
+  }
+
+  void _closeUuKeyboard() {
+    setState(() {
+      _uuPcKeyboard = false;
+      _showEdit = false;
+    });
+    gFFI.invokeMethod("enable_soft_keyboard", false);
+    _mobileFocusNode.unfocus();
+    _physicalFocusNode.requestFocus();
+  }
+
+  void _enterUuSmallWindow() {
+    if (!UuPip.supported) {
+      enterUuMiniWindow(context, widget.id, gFFI);
+      return;
+    }
+    UuPip.instance.start(gFFI, onStopped: _onUuPipStopped).then((started) {
+      if (started) {
+        showToast('已开启画中画小窗，可切换到其他 App 继续查看');
+      } else if (mounted) {
+        enterUuMiniWindow(context, widget.id, gFFI);
+      }
+    });
+  }
+
+  void _onUuPipStopped(String reason) {
+    if (!mounted || reason != 'failed') return;
+    showToast('画中画启动失败，已切换为小窗模式');
+    enterUuMiniWindow(context, widget.id, gFFI);
+  }
+
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
       : (_showBar && gFFI.ffiModel.pi.displays.isNotEmpty
@@ -492,7 +591,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final keyboardIsVisible =
         keyboardVisibilityController.isVisible && _showEdit;
-    final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
+    final showActionButton = !_showBar ||
+        _showGestureHelp ||
+        (keyboardIsVisible && !_uuCustomUi);
 
     return WillPopScope(
       onWillPop: () async {
@@ -603,6 +704,34 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   }
 
   Widget getBottomAppBar() {
+    if (_uuCustomUi) {
+      if (_uuPcKeyboard) {
+        return UuPcKeyboard(
+          ffi: gFFI,
+          onImeKeyboard: _openUuImeKeyboard,
+          onClose: _closeUuKeyboard,
+        );
+      }
+      return UuSessionToolbar(
+        ffi: gFFI,
+        onKeyboard: _openUuKeyboard,
+        onPanel: () {
+          setState(() => _showEdit = false);
+          showUuSessionPanel(
+            context,
+            widget.id,
+            gFFI,
+            onChat: () => onPressedTextChat(widget.id),
+            onShowGestureHelp: () => setState(() => _showGestureHelp = true),
+            onSmallWindow: _enterUuSmallWindow,
+            onKeymapChanged: () {
+              if (mounted) setState(() {});
+            },
+            onEditKeymap: _editUuKeymap,
+          );
+        },
+      );
+    }
     final ffiModel = Provider.of<FfiModel>(context);
     return BottomAppBar(
       elevation: 10,
@@ -717,14 +846,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               right: 10,
               child: QualityMonitor(gFFI.qualityMonitorModel),
             ),
-            Obx(() {
-              final chatKeyboardRequested =
-                  gFFI.chatModel.softKeyboardRequested.value;
-              return KeyHelpTools(
-                  keyboardIsVisible: keyboardVisibilityController.isVisible &&
-                      (_showEdit || chatKeyboardRequested),
-                  showGestureHelp: _showGestureHelp);
-            }),
+            if (!_uuCustomUi)
+              Obx(() {
+                final chatKeyboardRequested =
+                    gFFI.chatModel.softKeyboardRequested.value;
+                return KeyHelpTools(
+                    keyboardIsVisible: keyboardVisibilityController.isVisible &&
+                        (_showEdit || chatKeyboardRequested),
+                    showGestureHelp: _showGestureHelp);
+              }),
             SizedBox(
               width: 0,
               height: 0,
@@ -766,6 +896,34 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           } else {
             paints.add(FloatingMouseWidgets(
               ffi: gFFI,
+            ));
+          }
+          if (_uuCustomUi) {
+            paints.add(Positioned.fill(
+              child: ListenableBuilder(
+                listenable:
+                    Listenable.merge([uuKeymapRevision, uuKeymapHidden]),
+                builder: (_, __) => UuKeymapOverlay(
+                  ffi: gFFI,
+                  onKeyboardInput: _openUuImeKeyboard,
+                ),
+              ),
+            ));
+          }
+          if (_uuCustomUi &&
+              !_uuPcKeyboard &&
+              _showEdit &&
+              keyboardVisibilityController.isVisible) {
+            paints.add(Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: UuKeyboardHeader(
+                pcSelected: false,
+                onImeKeyboard: () {},
+                onPcKeyboard: _openUuPcKeyboard,
+                onClose: _closeUuKeyboard,
+              ),
             ));
           }
           return paints;

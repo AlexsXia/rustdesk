@@ -20,10 +20,10 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -68,6 +68,20 @@ CREATE TABLE IF NOT EXISTS address_books (
     user_id INTEGER PRIMARY KEY,
     data    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account_secrets (
+    user_id    INTEGER PRIMARY KEY,
+    secret     TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS keymap_profiles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    name       TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    is_public  INTEGER NOT NULL DEFAULT 1,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_keymap_updated ON keymap_profiles(updated_at);
 ";
 
 #[derive(Clone)]
@@ -155,6 +169,27 @@ fn new_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// One secret per account, mirrored by every signed-in device into its permanent
+/// password, so devices of the same account can connect without a prompt.
+fn account_device_secret(conn: &Connection, user_id: i64) -> Result<String, ApiError> {
+    if let Some(secret) = conn
+        .query_row(
+            "SELECT secret FROM account_secrets WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Ok(secret);
+    }
+    let secret = new_token();
+    conn.execute(
+        "INSERT INTO account_secrets(user_id, secret, created_at) VALUES(?1, ?2, ?3)",
+        params![user_id, secret, now()],
+    )?;
+    Ok(secret)
 }
 
 fn hash_password(password: &str) -> Result<String, ApiError> {
@@ -288,11 +323,12 @@ fn user_payload(user: &UserRow) -> Value {
     })
 }
 
-fn auth_body(token: &str, user: &UserRow) -> Value {
+fn auth_body(token: &str, user: &UserRow, device_secret: &str) -> Value {
     json!({
         "access_token": token,
         "type": "access_token",
         "tfa_type": "",
+        "device_secret": device_secret,
         "user": user_payload(user)
     })
 }
@@ -590,7 +626,8 @@ async fn register(
             params![token, user_id, now()],
         )?;
         bind_device(conn, &user, &device_id, &uuid, Some(&device_info))?;
-        Ok(auth_body(&token, &user))
+        let secret = account_device_secret(conn, user.id)?;
+        Ok(auth_body(&token, &user, &secret))
     })
     .await?;
     Ok(Json(body))
@@ -630,7 +667,8 @@ async fn login(
             params![token, user_id, now()],
         )?;
         bind_device(conn, &user, &device_id, &uuid, Some(&device_info))?;
-        Ok(auth_body(&token, &user))
+        let secret = account_device_secret(conn, user.id)?;
+        Ok(auth_body(&token, &user, &secret))
     })
     .await?;
     Ok(Json(body))
@@ -644,7 +682,9 @@ async fn current_user(
     let body = with_db(&state, move |conn| {
         let user = auth_user(conn, &headers)?;
         bind_device(conn, &user, ctx.id.trim(), ctx.uuid.trim(), None)?;
-        Ok(user_payload(&user))
+        let mut payload = user_payload(&user);
+        payload["device_secret"] = json!(account_device_secret(conn, user.id)?);
+        Ok(payload)
     })
     .await?;
     Ok(Json(body))
@@ -833,6 +873,99 @@ async fn peers(State(state): State<AppState>, headers: HeaderMap) -> Result<Json
     Ok(Json(body))
 }
 
+#[derive(Deserialize)]
+struct KeymapPush {
+    id: Option<i64>,
+    name: String,
+    data: String,
+}
+
+async fn keymap_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let body = with_db(&state, move |conn| {
+        let user = auth_user(conn, &headers)?;
+        let mut stmt = conn.prepare(
+            "SELECT k.id, k.name, k.data, k.updated_at,
+                    COALESCE(NULLIF(u.display_name, ''), u.name)
+             FROM keymap_profiles k JOIN users u ON u.id = k.user_id
+             WHERE k.is_public = 1 OR k.user_id = ?1
+             ORDER BY k.updated_at DESC LIMIT 200",
+        )?;
+        let profiles = stmt
+            .query_map(params![user.id], |row| {
+                Ok(json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "name": row.get::<_, String>(1)?,
+                    "data": row.get::<_, String>(2)?,
+                    "updated_at": row.get::<_, i64>(3)?,
+                    "author": row.get::<_, String>(4)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(json!({ "profiles": profiles }))
+    })
+    .await?;
+    Ok(Json(body))
+}
+
+async fn keymap_push(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(push): Json<KeymapPush>,
+) -> Result<Json<Value>, ApiError> {
+    let name = push.name.trim().to_owned();
+    if name.is_empty() || name.chars().count() > 40 {
+        return Err(ApiError::bad_request("方案名称不能为空且不超过 40 个字"));
+    }
+    if push.data.len() > 64 * 1024 {
+        return Err(ApiError::bad_request("方案数据过大"));
+    }
+    serde_json::from_str::<Value>(&push.data)?;
+    let id = with_db(&state, move |conn| {
+        let user = auth_user(conn, &headers)?;
+        let id = if let Some(id) = push.id {
+            let updated = conn.execute(
+                "UPDATE keymap_profiles SET name = ?1, data = ?2, updated_at = ?3
+                 WHERE id = ?4 AND user_id = ?5",
+                params![name, push.data, now(), id, user.id],
+            )?;
+            if updated == 0 {
+                return Err(ApiError::new(StatusCode::NOT_FOUND, "方案不存在"));
+            }
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO keymap_profiles(user_id, name, data, is_public, updated_at)
+                 VALUES(?1, ?2, ?3, 1, ?4)",
+                params![user.id, name, push.data, now()],
+            )?;
+            conn.last_insert_rowid()
+        };
+        Ok(id)
+    })
+    .await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn keymap_delete(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    with_db(&state, move |conn| {
+        let user = auth_user(conn, &headers)?;
+        conn.execute(
+            "DELETE FROM keymap_profiles WHERE id = ?1 AND user_id = ?2",
+            params![id, user.id],
+        )?;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(json!({})))
+}
+
 async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" })))
 }
@@ -867,6 +1000,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/device-group/accessible", get(device_groups))
         .route("/api/users", get(users))
         .route("/api/peers", get(peers))
+        .route("/api/keymap/profiles", get(keymap_list).post(keymap_push))
+        .route("/api/keymap/profiles/{id}", delete(keymap_delete))
         .fallback(not_found)
         .with_state(state);
 

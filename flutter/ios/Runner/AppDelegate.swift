@@ -24,6 +24,11 @@ import AVFoundation
   func sceneWillConnect(window: UIWindow?, launchURL: URL?) {
     self.window = window
     GeneratedPluginRegistrant.register(with: self)
+    if let flutterViewController = window?.rootViewController as? FlutterViewController {
+      UuPipChannel.register(
+        messenger: flutterViewController.binaryMessenger,
+        viewController: flutterViewController)
+    }
     var launchOptions: [UIApplication.LaunchOptionsKey: Any] = [:]
     if let launchURL = launchURL {
       launchOptions[.url] = launchURL

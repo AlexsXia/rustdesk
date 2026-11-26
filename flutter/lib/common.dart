@@ -30,6 +30,7 @@ import 'package:window_size/window_size.dart' as window_size;
 
 import '../consts.dart';
 import 'common/widgets/overlay.dart';
+import 'custom_ui/uu_defaults.dart';
 import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'mobile/pages/view_camera_page.dart';
@@ -2613,6 +2614,10 @@ connect(BuildContext context, String id,
     bool? isSharedPassword,
     String loginMethod = ''}) async {
   if (id == '') return;
+  if (uuMiniWindowOpen.value) {
+    showToast('小窗模式中，请先还原全屏或退出小窗');
+    return;
+  }
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
       if (Get.isRegistered<IDTextEditingController>()) {

@@ -2186,6 +2186,18 @@ pub async fn get_key(sync: bool) -> String {
     key
 }
 
+/// The UU client signs in to a self-hosted account service, not a Pro rendezvous server.
+/// Passing its token on would make the core expect the Pro server's key exchange, which the
+/// OSS hbbs never starts, so every connection would time out; the token is also not needed
+/// there, the configured key is what hbbs checks.
+pub fn get_rendezvous_token() -> String {
+    if LocalConfig::get_option("custom-ui").trim() != "N" {
+        String::new()
+    } else {
+        LocalConfig::get_option("access_token")
+    }
+}
+
 pub fn pk_to_fingerprint(pk: Vec<u8>) -> String {
     let s: String = pk.iter().map(|u| format!("{:02x}", u)).collect();
     s.chars()

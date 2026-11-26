@@ -2666,6 +2666,35 @@ class _AboutState extends State<_About> {
   }
 }
 
+/// The content of a single settings tab, for hosts other than
+/// [DesktopSettingPage] (e.g. the UU-style settings dialog).
+class DesktopSettingContent extends StatelessWidget {
+  const DesktopSettingContent({Key? key, required this.tabKey})
+      : super(key: key);
+
+  final SettingsTabKey tabKey;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (tabKey) {
+      case SettingsTabKey.general:
+        return const _General();
+      case SettingsTabKey.safety:
+        return const _Safety();
+      case SettingsTabKey.network:
+        return const _Network();
+      case SettingsTabKey.display:
+        return const _Display();
+      case SettingsTabKey.account:
+        return const _Account();
+      case SettingsTabKey.printer:
+        return const _Printer();
+      case SettingsTabKey.about:
+        return const _About();
+    }
+  }
+}
+
 //#endregion
 
 //#region components

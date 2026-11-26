@@ -126,6 +126,7 @@ Future<void> initEnv(String appType) async {
   // focus on multi-ffi on desktop first
   await initGlobalFFI();
   await applyUuServerDefaults();
+  await applyUuInputDefaults();
   // await Firebase.initializeApp();
   _registerEventHandler();
   // Update the system theme.

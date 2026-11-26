@@ -12,7 +12,10 @@ import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../theme.dart';
+import '../uu_auth.dart';
 import '../uu_peer.dart';
+import '../uu_wallpaper.dart';
+import 'uu_device_detail_page.dart';
 import 'uu_mobile_login_page.dart';
 
 /// UU 远程风格的 iOS 首页：我的设备 / 远程协助 / 我的。
@@ -40,6 +43,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   void initState() {
     super.initState();
     unawaited(bind.mainLoadRecentPeers());
+    unawaited(uuSyncDeviceSecret());
     _assistId.addListener(_onAssistIdChanged);
     _initTracking();
   }
@@ -151,8 +155,13 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   }
 
   Future<void> _connect(Peer peer) async {
-    await connect(context, peer.id,
-        password: peer.password.isNotEmpty ? peer.password : null);
+    await connect(context, peer.id, password: uuPeerPassword(peer));
+  }
+
+  void _openDetail(Peer peer) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => UuDeviceDetailPage(peer: peer)),
+    );
   }
 
   String _maskName(String name) {
@@ -428,7 +437,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => unawaited(_connect(peer)),
+          onTap: () => _openDetail(peer),
+          onLongPress: () => unawaited(_connect(peer)),
           child: Row(
             children: [
               SizedBox(
@@ -452,6 +462,10 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                           color: Colors.white.withOpacity(0.9),
                         ),
                       ),
+                    ),
+                    UuWallpaperLayer(
+                      peerId: peer.id,
+                      fallback: const SizedBox.shrink(),
                     ),
                     Positioned(
                       left: 8,
@@ -526,7 +540,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
         borderRadius: BorderRadius.circular(14),
         onTap: () {
           Navigator.of(context).pop();
-          unawaited(_connect(peer));
+          _openDetail(peer);
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
