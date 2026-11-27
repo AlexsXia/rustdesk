@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common.dart' show translate;
 
+import '../design/uu_tokens.dart';
 import '../theme.dart';
 import '../uu_auth.dart';
 
@@ -38,15 +40,15 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
     final username = _username.text.trim();
     final password = _password.text;
     if (username.isEmpty) {
-      setState(() => _error = '请输入用户名');
+      setState(() => _error = translate('Please enter a username'));
       return;
     }
     if (password.length < 6) {
-      setState(() => _error = '密码至少需要 6 个字符');
+      setState(() => _error = translate('Password must be at least 6 characters'));
       return;
     }
     if (_register && password != _confirm.text) {
-      setState(() => _error = '两次输入的密码不一致');
+      setState(() => _error = translate('Passwords do not match'));
       return;
     }
     setState(() {
@@ -69,7 +71,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '网络错误：$e');
+        setState(() => _error = translate('Network error: {$e}'));
       }
     } finally {
       if (mounted) {
@@ -83,13 +85,13 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
       labelText: label,
       prefixIcon: Icon(icon, color: UuTheme.textSecondary, size: 20),
       filled: true,
-      fillColor: const Color(0xFFF4F5F8),
+      fillColor: UuColors.background,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: UuTheme.accent, width: 1.2),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -98,13 +100,14 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: UuColors.surface,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: UuColors.surface,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: UuTheme.textPrimary),
+          icon: Icon(Icons.close, color: UuTheme.textPrimary),
           onPressed: () => Navigator.of(context).pop(false),
         ),
       ),
@@ -116,8 +119,8 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                _register ? '创建账号' : '登录',
-                style: const TextStyle(
+                _register ? translate('Create account') : translate('Login'),
+                style: TextStyle(
                   color: UuTheme.textPrimary,
                   fontSize: 30,
                   fontWeight: FontWeight.w700,
@@ -126,9 +129,9 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
               const SizedBox(height: 8),
               Text(
                 _register
-                    ? '注册成功后，本机会自动加入账号设备列表'
-                    : '登录后即可在手机上控制该账号下的所有设备',
-                style: const TextStyle(
+                    ? translate('After registering, this device joins your account device list automatically')
+                    : translate('Sign in to control all devices in this account from your phone'),
+                style: TextStyle(
                   color: UuTheme.textSecondary,
                   fontSize: 14,
                   height: 1.4,
@@ -141,7 +144,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                 autofocus: true,
                 autocorrect: false,
                 textInputAction: TextInputAction.next,
-                decoration: _decoration('用户名', Icons.person_outline),
+                decoration: _decoration(translate('Username'), Icons.person_outline),
               ),
               const SizedBox(height: 14),
               TextField(
@@ -154,7 +157,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                 onSubmitted: (_) {
                   if (!_register) unawaited(_submit());
                 },
-                decoration: _decoration('密码', Icons.lock_outline).copyWith(
+                decoration: _decoration(translate('Password'), Icons.lock_outline).copyWith(
                   suffixIcon: IconButton(
                     onPressed: () => setState(() => _obscure = !_obscure),
                     icon: Icon(
@@ -172,7 +175,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                   enabled: !_busy,
                   obscureText: _obscure,
                   textInputAction: TextInputAction.next,
-                  decoration: _decoration('确认密码', Icons.lock_outline),
+                  decoration: _decoration(translate('Confirm password'), Icons.lock_outline),
                 ),
                 const SizedBox(height: 14),
                 TextField(
@@ -180,7 +183,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                   enabled: !_busy,
                   textInputAction: TextInputAction.done,
                   onSubmitted: (_) => unawaited(_submit()),
-                  decoration: _decoration('昵称（可选）', Icons.badge_outlined),
+                  decoration: _decoration(translate('Display name (optional)'), Icons.badge_outlined),
                 ),
               ],
               if (_error != null) ...[
@@ -188,7 +191,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                 Text(
                   _error!,
                   style: const TextStyle(
-                    color: Color(0xFFDC2626),
+                    color: UuColors.danger,
                     fontSize: 13,
                   ),
                 ),
@@ -215,7 +218,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                           ),
                         )
                       : Text(
-                          _register ? '注册并登录' : '登录',
+                          _register ? translate('Register and sign in') : translate('Login'),
                           style: const TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w600,
@@ -232,7 +235,7 @@ class _UuMobileLoginPageState extends State<UuMobileLoginPage> {
                           _error = null;
                         }),
                 child: Text(
-                  _register ? '已有账号？去登录' : '还没有账号？立即注册',
+                  _register ? translate('Already have an account? Sign in') : translate('No account yet? Register now'),
                   style: const TextStyle(color: UuTheme.accent, fontSize: 14),
                 ),
               ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/formatter/id_formatter.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
@@ -11,12 +12,19 @@ import 'package:flutter_hbb/models/user_model.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
+import '../design/uu_tokens.dart';
 import '../theme.dart';
 import '../uu_auth.dart';
 import '../uu_peer.dart';
 import '../uu_wallpaper.dart';
+import '../widgets/uu_account.dart';
+import '../widgets/uu_components.dart';
+import '../widgets/uu_feedback.dart';
+import '../widgets/uu_menu.dart';
+import '../widgets/uu_platform_icon.dart';
 import 'uu_device_detail_page.dart';
 import 'uu_mobile_login_page.dart';
+import 'uu_settings_page.dart';
 
 /// UU 远程风格的 iOS 首页：我的设备 / 远程协助 / 我的。
 class UuMobileHome extends StatefulWidget {
@@ -27,9 +35,9 @@ class UuMobileHome extends StatefulWidget {
 }
 
 class _UuMobileHomeState extends State<UuMobileHome> {
-  static const _bg = Color(0xFFF2F3F7);
-  static const _muted = Color(0xFF8A8F99);
-  static const _hairline = Color(0xFFEDEFF3);
+  Color get _bg => UuColors.background;
+  Color get _muted => UuColors.textSecondary;
+  Color get _hairline => UuColors.divider;
 
   int _tab = 0;
   Timer? _onlineTimer;
@@ -38,6 +46,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   bool _offlineCollapsed = false;
   final Map<Peers, VoidCallback> _peersListeners = {};
   final _assistId = TextEditingController();
+  final _searchController = TextEditingController();
+  bool _searching = false;
 
   @override
   void initState() {
@@ -58,6 +68,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
     _peersListeners.clear();
     _assistId.removeListener(_onAssistIdChanged);
     _assistId.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -148,6 +159,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
       ),
     );
     if (ok == true) {
+      uuToast(translate('Signed in'));
       await UserModel.updateOtherModels();
       _queryOnlineStatuses();
       if (mounted) setState(() {});
@@ -155,7 +167,24 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   }
 
   Future<void> _connect(Peer peer) async {
+    if (!peer.online) {
+      uuToast(translate('Device is offline and cannot be connected'));
+      return;
+    }
     await connect(context, peer.id, password: uuPeerPassword(peer));
+  }
+
+  Future<void> _connectFileTransfer(Peer peer) async {
+    if (!peer.online) {
+      uuToast(translate('Device is offline and cannot be connected'));
+      return;
+    }
+    await connect(
+      context,
+      peer.id,
+      password: uuPeerPassword(peer),
+      isFileTransfer: true,
+    );
   }
 
   void _openDetail(Peer peer) {
@@ -169,20 +198,6 @@ class _UuMobileHomeState extends State<UuMobileHome> {
       return '${name.substring(0, 3)}•••••${name.substring(9)}';
     }
     return name;
-  }
-
-  IconData _brandIcon(String platform) {
-    final p = platform.toLowerCase();
-    if (p.contains('mac') ||
-        p.contains('ios') ||
-        p.contains('iphone') ||
-        p.contains('ipad')) {
-      return Icons.apple;
-    }
-    if (p.contains('win')) return Icons.desktop_windows;
-    if (p.contains('android')) return Icons.android;
-    if (p.contains('linux')) return Icons.computer;
-    return Icons.devices;
   }
 
   List<Color> _thumbnailColors(String platform) {
@@ -204,6 +219,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Scaffold(
       backgroundColor: _bg,
       body: IndexedStack(
@@ -215,8 +231,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
         ],
       ),
       bottomNavigationBar: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: Colors.white,
+        decoration: BoxDecoration(
+          color: UuColors.surface,
           border: Border(top: BorderSide(color: _hairline, width: 0.5)),
         ),
         child: SafeArea(
@@ -225,27 +241,27 @@ class _UuMobileHomeState extends State<UuMobileHome> {
             currentIndex: _tab,
             onTap: (index) => setState(() => _tab = index),
             type: BottomNavigationBarType.fixed,
-            backgroundColor: Colors.white,
+            backgroundColor: UuColors.surface,
             elevation: 0,
             selectedItemColor: UuTheme.accent,
             unselectedItemColor: _muted,
             selectedFontSize: 12,
             unselectedFontSize: 12,
-            items: const [
+            items: [
               BottomNavigationBarItem(
                 icon: Icon(Icons.devices_outlined),
                 activeIcon: Icon(Icons.devices),
-                label: '我的设备',
+                label: translate('My devices'),
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.screen_share_outlined),
                 activeIcon: Icon(Icons.screen_share),
-                label: '远程协助',
+                label: translate('Remote assistance'),
               ),
               BottomNavigationBarItem(
                 icon: Icon(Icons.person_outline),
                 activeIcon: Icon(Icons.person),
-                label: '我的',
+                label: translate('Me'),
               ),
             ],
           ),
@@ -266,35 +282,91 @@ class _UuMobileHomeState extends State<UuMobileHome> {
           children: [
             Row(
               children: [
-                const Text(
-                  '可控设备',
+                Text(
+                  translate('Controllable devices'),
                   style: TextStyle(
                     color: UuTheme.textPrimary,
-                    fontSize: 28,
+                    fontSize: 24,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 const Spacer(),
                 _AllDevicesPill(onTap: _showAllDevices),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: _searching ? translate('Close search') : translate('Search devices'),
+                  onPressed: () => setState(() {
+                    _searching = !_searching;
+                    if (!_searching) _searchController.clear();
+                  }),
+                  icon: Icon(
+                    _searching ? Icons.close_rounded : Icons.search,
+                    size: 21,
+                    color: UuTheme.textPrimary,
+                  ),
+                ),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: translate('Add device'),
+                  onPressed: () => unawaited(_showAddDevice()),
+                  icon: Icon(
+                    Icons.add_rounded,
+                    size: 23,
+                    color: UuTheme.textPrimary,
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 22),
+            if (_searching)
+              Padding(
+                padding: const EdgeInsets.only(top: 14),
+                child: UuSearchField(
+                  controller: _searchController,
+                  hint: translate('Search name or ID'),
+                  height: 40,
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            const SizedBox(height: 18),
             Obx(() {
-              if (!gFFI.userModel.isLogin) {
-                return _loginPrompt();
+              final query = _searchController.text.trim().toLowerCase();
+              final account = _accountPeers();
+              final recent = _recentOnly(account);
+              bool matches(Peer peer) =>
+                  query.isEmpty ||
+                  uuPeerName(peer).toLowerCase().contains(query) ||
+                  peer.id.toLowerCase().contains(query);
+              if (query.isNotEmpty) {
+                final results = <Peer>[...account, ...recent]
+                    .where(matches)
+                    .toList();
+                if (results.isEmpty) {
+                  return UuEmptyState(
+                    icon: Icons.search_off_rounded,
+                    title: translate('No matching devices'),
+                    message: translate('Try another name or ID'),
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _searchHeader(translate('Search results: {${results.length}}')),
+                    const SizedBox(height: 10),
+                    ...results.map((peer) => _deviceCard(peer)),
+                  ],
+                );
               }
-              final peers = _accountPeers();
-              if (peers.isEmpty) {
-                return _emptyDevices();
-              }
-              final online = peers.where((p) => p.online).toList();
-              final offline = peers.where((p) => !p.online).toList();
+              final online = account.where((p) => p.online).toList();
+              final offline = account.where((p) => !p.online).toList();
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (!gFFI.userModel.isLogin) _loginPrompt(),
+                  if (gFFI.userModel.isLogin && account.isEmpty)
+                    _accountEmptyOrStatus(),
                   if (online.isNotEmpty) ...[
                     _SectionHeader(
-                      title: '在线设备 ${online.length}',
+                      title: translate('Online devices: {${online.length}}'),
                       collapsed: _onlineCollapsed,
                       onTap: () => setState(
                           () => _onlineCollapsed = !_onlineCollapsed),
@@ -306,7 +378,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   ],
                   if (offline.isNotEmpty) ...[
                     _SectionHeader(
-                      title: '离线设备 ${offline.length}',
+                      title: translate('Offline devices: {${offline.length}}'),
                       collapsed: _offlineCollapsed,
                       onTap: () => setState(
                           () => _offlineCollapsed = !_offlineCollapsed),
@@ -314,6 +386,12 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                     const SizedBox(height: 10),
                     if (!_offlineCollapsed)
                       ...offline.map((peer) => _deviceCard(peer)),
+                  ],
+                  if (recent.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _searchHeader(translate('Recent connections: {${recent.length}}')),
+                    const SizedBox(height: 10),
+                    ...recent.map((peer) => _recentRow(peer)),
                   ],
                 ],
               );
@@ -324,11 +402,126 @@ class _UuMobileHomeState extends State<UuMobileHome> {
     );
   }
 
+  Widget _searchHeader(String title) {
+    return Text(
+      title,
+      style: TextStyle(
+        color: UuColors.textSecondary,
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+
+  List<Peer> _recentOnly(List<Peer> account) {
+    final accountIds = account.map((p) => p.id).toSet();
+    final localId = _localId;
+    return _connectable(gFFI.recentPeersModel.peers)
+        .where((p) =>
+            !accountIds.contains(p.id) &&
+            (localId.isEmpty || p.id != localId))
+        .take(5)
+        .toList();
+  }
+
+  Widget _recentRow(Peer peer) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: UuCard(
+        radius: UuRadius.md,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: peer.online ? UuColors.primarySoft : UuColors.hover,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                UuPeerPlatformIcon.iconFor(peer.platform),
+                size: 19,
+                color: peer.online ? UuColors.primary : UuColors.textTertiary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    uuPeerName(peer),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: UuColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    peer.platform.isEmpty
+                        ? (peer.online ? translate('Online') : translate('Offline'))
+                        : '${translate(peer.online ? 'Online' : 'Offline')} · ${peer.platform}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: peer.online
+                          ? UuColors.success
+                          : UuColors.textTertiary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            UuPillButton(
+              label: translate('Connect'),
+              height: 32,
+              onPressed: () => unawaited(_connect(peer)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAddDevice() async {
+    final controller = TextEditingController();
+    final ok = await showUuDialog<bool>(
+      context,
+      title: translate('Add device'),
+      message: translate("Enter the other device's ID. It will appear in recent connections after connecting."),
+      content: UuTextField(
+        controller: controller,
+        hint: translate('Device ID'),
+        autofocus: true,
+        keyboardType: TextInputType.number,
+      ),
+      actions: [
+        uuDialogTextButton(translate('Cancel'), () => Navigator.of(context).pop(false)),
+        uuDialogFilledButton(
+            translate('Connect'), () => Navigator.of(context).pop(true)),
+      ],
+    );
+    final id = controller.text.trim();
+    controller.dispose();
+    if (ok != true || !mounted) return;
+    if (id.isEmpty) {
+      uuToast(translate('Please enter a device ID'));
+      return;
+    }
+    await connect(context, id);
+  }
+
   Widget _loginPrompt() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: UuColors.surface,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -339,8 +532,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
               const Icon(Icons.cloud_outlined,
                   color: UuTheme.accent, size: 22),
               const SizedBox(width: 8),
-              const Text(
-                '登录后同步账号设备',
+              Text(
+                translate('Sign in to sync account devices'),
                 style: TextStyle(
                   color: UuTheme.textPrimary,
                   fontSize: 17,
@@ -350,8 +543,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
             ],
           ),
           const SizedBox(height: 8),
-          const Text(
-            '在手机和电脑上登录同一账号，即可在这里看到全部设备并一键远控。',
+          Text(
+            translate('Sign in to the same account on your phone and computer to see all devices here and connect with one tap.'),
             style: TextStyle(
               color: _muted,
               fontSize: 13,
@@ -372,7 +565,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text('登录'),
+                  child: Text(translate('Login')),
                 ),
               ),
               const SizedBox(width: 10),
@@ -386,7 +579,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text('注册'),
+                  child: Text(translate('Register')),
                 ),
               ),
             ],
@@ -396,15 +589,90 @@ class _UuMobileHomeState extends State<UuMobileHome> {
     );
   }
 
+  Widget _accountEmptyOrStatus() {
+    final error = gFFI.abModel.abPullError.value;
+    if (error.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 70, bottom: 40),
+        child: Column(
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 56, color: UuColors.textTertiary),
+            const SizedBox(height: 14),
+            Text(
+              translate('Failed to sync account devices'),
+              style: TextStyle(
+                color: UuTheme.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                error,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: _muted, fontSize: 13, height: 1.5),
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: _refresh,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: UuColors.primary,
+                side: const BorderSide(color: UuColors.primary),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(translate('Try again')),
+            ),
+          ],
+        ),
+      );
+    }
+    if (gFFI.abModel.currentAbLoading.value) {
+      return Padding(
+        padding: EdgeInsets.only(top: 70, bottom: 40),
+        child: Center(
+          child: Column(
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: UuColors.primary,
+                ),
+              ),
+              SizedBox(height: 14),
+              Text(
+                translate('Syncing account devices...'),
+                style: TextStyle(color: UuColors.textSecondary, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return _emptyDevices();
+  }
+
   Widget _emptyDevices() {
     return Padding(
       padding: const EdgeInsets.only(top: 70, bottom: 40),
       child: Column(
-        children: const [
-          Icon(Icons.devices_other, size: 56, color: Color(0xFFC7CBD3)),
+        children: [
+          Icon(Icons.devices_other, size: 56, color: UuColors.textTertiary),
           SizedBox(height: 14),
           Text(
-            '暂无其他设备',
+            translate('No other devices'),
             style: TextStyle(
               color: UuTheme.textPrimary,
               fontSize: 17,
@@ -415,7 +683,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 32),
             child: Text(
-              '在另一台设备登录同一账号后，就会出现在这里',
+              translate('Sign in on another device with the same account to see it here'),
               textAlign: TextAlign.center,
               style: TextStyle(color: _muted, fontSize: 13, height: 1.5),
             ),
@@ -427,23 +695,22 @@ class _UuMobileHomeState extends State<UuMobileHome> {
 
   Widget _deviceCard(Peer peer) {
     return Container(
-      height: 96,
+      height: 88,
       margin: const EdgeInsets.only(bottom: 12),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: UuColors.surface,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: () => _openDetail(peer),
-          onLongPress: () => unawaited(_connect(peer)),
           child: Row(
             children: [
               SizedBox(
-                width: 112,
-                height: 96,
+                width: 96,
+                height: 88,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -457,8 +724,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       ),
                       child: Center(
                         child: Icon(
-                          _brandIcon(peer.platform),
-                          size: 38,
+                          UuPeerPlatformIcon.iconFor(peer.platform),
+                          size: 34,
                           color: Colors.white.withOpacity(0.9),
                         ),
                       ),
@@ -475,7 +742,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   ],
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -485,25 +752,87 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       uuPeerName(peer),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: UuTheme.textPrimary,
-                        fontSize: 17,
+                      style: TextStyle(
+                        color: UuColors.textPrimary,
+                        fontSize: 16,
                         fontWeight: FontWeight.w600,
                         height: 1.3,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Icon(
-                      _brandIcon(peer.platform),
-                      size: 18,
-                      color: UuTheme.accent,
+                    const SizedBox(height: 5),
+                    Text(
+                      '${translate(peer.online ? 'Online' : 'Offline')} · ID ${peer.id}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: peer.online
+                            ? UuColors.success
+                            : UuColors.textTertiary,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right,
-                  color: Color(0xFFC7CBD3), size: 24),
-              const SizedBox(width: 10),
+              TextButton(
+                onPressed: () => unawaited(_connect(peer)),
+                style: TextButton.styleFrom(
+                  backgroundColor:
+                      peer.online ? UuColors.primary : UuColors.hover,
+                  foregroundColor:
+                      peer.online ? Colors.white : UuColors.textSecondary,
+                  minimumSize: const Size(58, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(UuRadius.pill),
+                  ),
+                ),
+                child: Text(translate('Connect'), style: TextStyle(fontSize: 13)),
+              ),
+              SizedBox(
+                width: 40,
+                height: 44,
+                child: Center(
+                  child: UuMenuButton<String>(
+                    width: 184,
+                    icon: Icons.more_horiz,
+                    iconSize: 20,
+                    iconButtonSize: 40,
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'detail':
+                          _openDetail(peer);
+                          break;
+                        case 'file-transfer':
+                          unawaited(_connectFileTransfer(peer));
+                          break;
+                        case 'copy-id':
+                          Clipboard.setData(ClipboardData(text: peer.id));
+                          uuToast(translate('ID copied'));
+                          break;
+                      }
+                    },
+                    entriesBuilder: (context) => [
+                      UuMenuItem(
+                        value: 'detail',
+                        label: translate('Details'),
+                        icon: Icons.info_outline,
+                      ),
+                      UuMenuItem(
+                        value: 'file-transfer',
+                        label: translate('File transfer'),
+                        icon: Icons.swap_horiz,
+                      ),
+                      UuMenuItem(
+                        value: 'copy-id',
+                        label: translate('Copy ID'),
+                        icon: Icons.copy_outlined,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
             ],
           ),
         ),
@@ -514,27 +843,151 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   void _showAllDevices() {
     final peers = _accountPeers();
     _showSheet(
-      title: '全部设备',
+      title: translate('All devices'),
       child: peers.isEmpty
-          ? const _SheetEmpty(
+          ? UuEmptyState(
               icon: Icons.devices_other,
-              message: '暂无账号设备',
+              title: translate('No account devices'),
+              message: translate('Sign in and sync your account to see them here'),
             )
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              itemCount: peers.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final peer = peers[index];
-                return _sheetDeviceRow(peer);
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                const spacing = 12.0;
+                final cardWidth =
+                    (constraints.maxWidth - 32 - spacing) / 2;
+                final online = peers.where((p) => p.online).toList();
+                final offline = peers.where((p) => !p.online).toList();
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  children: [
+                    if (online.isNotEmpty) ...[
+                      _sheetGroupTitle(translate('Online devices: {${online.length}}')),
+                      Wrap(
+                        spacing: spacing,
+                        runSpacing: spacing,
+                        children: [
+                          for (final peer in online)
+                            SizedBox(
+                              width: cardWidth,
+                              child: _sheetDeviceCard(peer),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    if (offline.isNotEmpty) ...[
+                      _sheetGroupTitle(translate('Offline devices: {${offline.length}}')),
+                      Wrap(
+                        spacing: spacing,
+                        runSpacing: spacing,
+                        children: [
+                          for (final peer in offline)
+                            SizedBox(
+                              width: cardWidth,
+                              child: _sheetDeviceCard(peer),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                );
               },
             ),
     );
   }
 
+  Widget _sheetGroupTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: UuColors.textSecondary,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  Widget _sheetDeviceCard(Peer peer) {
+    return Material(
+      color: UuColors.surface,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          Navigator.of(context).pop();
+          _openDetail(peer);
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: peer.online
+                          ? UuColors.primarySoft
+                          : UuColors.hover,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      UuPeerPlatformIcon.iconFor(peer.platform),
+                      color: peer.online
+                          ? UuColors.primary
+                          : UuColors.textTertiary,
+                      size: 20,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: peer.online
+                          ? UuColors.success
+                          : UuColors.textTertiary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                uuPeerName(peer),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: UuColors.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                peer.online ? translate('Online · {${peer.id}}') : translate('Offline · {${peer.id}}'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: peer.online ? UuColors.success : _muted,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _sheetDeviceRow(Peer peer) {
     return Material(
-      color: Colors.white,
+      color: UuColors.surface,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -554,7 +1007,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  _brandIcon(peer.platform),
+                  UuPeerPlatformIcon.iconFor(peer.platform),
                   color: UuTheme.accent,
                   size: 22,
                 ),
@@ -568,7 +1021,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       uuPeerName(peer),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: UuTheme.textPrimary,
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -576,19 +1029,17 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      peer.online ? '在线 · ${peer.id}' : '离线 · ${peer.id}',
+                      peer.online ? translate('Online · {${peer.id}}') : translate('Offline · {${peer.id}}'),
                       style: TextStyle(
-                        color: peer.online
-                            ? const Color(0xFF16A34A)
-                            : _muted,
+                        color: peer.online ? UuColors.success : _muted,
                         fontSize: 12,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right,
-                  color: Color(0xFFC7CBD3), size: 22),
+              Icon(Icons.chevron_right,
+                  color: UuColors.textTertiary, size: 22),
             ],
           ),
         ),
@@ -604,7 +1055,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
       builder: (sheetContext) {
         return Container(
           height: MediaQuery.of(sheetContext).size.height * 0.72,
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: _bg,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
@@ -617,7 +1068,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD5D8DE),
+                    color: UuColors.divider,
                     borderRadius: BorderRadius.circular(99),
                   ),
                 ),
@@ -627,7 +1078,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                     children: [
                       Text(
                         title,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: UuTheme.textPrimary,
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
@@ -636,7 +1087,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       const Spacer(),
                       IconButton(
                         onPressed: () => Navigator.of(sheetContext).pop(),
-                        icon: const Icon(Icons.close,
+                        icon: Icon(Icons.close,
                             color: UuTheme.textSecondary),
                       ),
                     ],
@@ -660,8 +1111,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         children: [
-          const Text(
-            '远程协助',
+          Text(
+            translate('Remote assistance'),
             style: TextStyle(
               color: UuTheme.textPrimary,
               fontSize: 28,
@@ -672,14 +1123,14 @@ class _UuMobileHomeState extends State<UuMobileHome> {
           Container(
             padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: UuColors.surface,
               borderRadius: BorderRadius.circular(16),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                  '远控伙伴设备',
+                Text(
+                  translate('Remote partner device'),
                   style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 20,
@@ -687,8 +1138,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  '通过其他设备的【设备 ID】及【设备验证码】启动远程控制',
+                Text(
+                  translate("Start remote control with another device's ID and verification code"),
                   style: TextStyle(
                     color: _muted,
                     fontSize: 14,
@@ -698,8 +1149,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                 const SizedBox(height: 20),
                 Row(
                   children: [
-                    const Text(
-                      '伙伴的设备 ID',
+                    Text(
+                      translate('Partner device ID'),
                       style: TextStyle(
                         color: UuTheme.textPrimary,
                         fontSize: 15,
@@ -716,8 +1167,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       icon: const Icon(Icons.history, size: 18),
-                      label: const Text(
-                        '最近连接',
+                      label: Text(
+                        translate('Recent connections'),
                         style: TextStyle(fontSize: 15),
                       ),
                     ),
@@ -731,20 +1182,20 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   enableSuggestions: false,
                   inputFormatters: [IDTextInputFormatter()],
                   onSubmitted: (_) => _startAssist(),
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
                   ),
                   decoration: InputDecoration(
-                    hintText: '请输入设备 ID',
+                    hintText: translate('Please enter a device ID'),
                     hintStyle: const TextStyle(
                       color: Color(0xFF9AA0AA),
                       fontSize: 16,
                       fontWeight: FontWeight.normal,
                     ),
                     filled: true,
-                    fillColor: const Color(0xFFF3F4F7),
+                    fillColor: UuColors.background,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,
@@ -766,8 +1217,8 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: const Text(
-                      '开始远控',
+                    child: Text(
+                      translate('Start remote control'),
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -793,11 +1244,12 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   void _showRecent() {
     final peers = _connectable(gFFI.recentPeersModel.peers);
     _showSheet(
-      title: '最近连接',
+      title: translate('Recent connections'),
       child: peers.isEmpty
-          ? const _SheetEmpty(
-              icon: Icons.history,
-              message: '暂无最近连接',
+          ? UuEmptyState(
+              icon: Icons.history_rounded,
+              title: translate('No recent connections'),
+              message: translate('Devices you have connected to will appear here'),
             )
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -826,7 +1278,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   final loggedIn = gFFI.userModel.isLogin;
                   final name = loggedIn
                       ? _maskName(gFFI.userModel.displayNameOrUserName)
-                      : '登录 / 注册';
+                      : translate('Login / Register');
                   return InkWell(
                     borderRadius: BorderRadius.circular(14),
                     onTap: _openAccount,
@@ -834,7 +1286,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                       children: [
                         CircleAvatar(
                           radius: 33,
-                          backgroundColor: const Color(0xFF3B82F6),
+                          backgroundColor: UuColors.primary,
                           child: const Icon(Icons.person,
                               color: Colors.white, size: 42),
                         ),
@@ -847,7 +1299,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                                 name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   color: UuTheme.textPrimary,
                                   fontSize: 26,
                                   fontWeight: FontWeight.w700,
@@ -858,13 +1310,13 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    loggedIn ? '我的账号' : '登录后同步账号设备',
-                                    style: const TextStyle(
+                                    loggedIn ? translate('My account') : translate('Sign in to sync account devices'),
+                                    style: TextStyle(
                                       color: _muted,
                                       fontSize: 15,
                                     ),
                                   ),
-                                  const Icon(Icons.chevron_right,
+                                  Icon(Icons.chevron_right,
                                       size: 17, color: _muted),
                                 ],
                               ),
@@ -883,23 +1335,23 @@ class _UuMobileHomeState extends State<UuMobileHome> {
           Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: UuColors.surface,
               borderRadius: BorderRadius.circular(16),
             ),
             child: Column(
               children: [
-                _menuRow(Icons.download_outlined, '已接收文件',
-                    () => _pushSimplePage('已接收文件', Icons.download_outlined,
-                        '暂无已接收的文件')),
+                _menuRow(Icons.download_outlined, translate('Received files'),
+                    () => _pushSimplePage(translate('Received files'), Icons.download_outlined,
+                        translate('No received files'))),
                 _menuDivider(),
-                _menuRow(Icons.mail_outline, '消息中心',
-                    () => _pushSimplePage('消息中心', Icons.mail_outline, '暂无消息')),
+                _menuRow(Icons.mail_outline, translate('Messages'),
+                    () => _pushSimplePage(translate('Messages'), Icons.mail_outline, translate('No messages'))),
                 _menuDivider(),
-                _menuRow(Icons.help_outline, '帮助与反馈', _openHelp),
+                _menuRow(Icons.help_outline, translate('Help and feedback'), _openHelp),
                 _menuDivider(),
-                _menuRow(Icons.headset_mic_outlined, '在线客服', _openSupport),
+                _menuRow(Icons.headset_mic_outlined, translate('Online support'), _openSupport),
                 _menuDivider(),
-                _menuRow(Icons.settings_outlined, '设置', _openSettings),
+                _menuRow(Icons.settings_outlined, translate('Settings'), _openSettings),
               ],
             ),
           ),
@@ -922,15 +1374,15 @@ class _UuMobileHomeState extends State<UuMobileHome> {
               Expanded(
                 child: Text(
                   label,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 17,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
-              const Icon(Icons.chevron_right,
-                  size: 22, color: Color(0xFFC7CBD3)),
+              Icon(Icons.chevron_right,
+                  size: 22, color: UuColors.textTertiary),
             ],
           ),
         ),
@@ -939,7 +1391,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   }
 
   Widget _menuDivider() {
-    return const Divider(
+    return Divider(
       height: 0.5,
       thickness: 0.5,
       indent: 55,
@@ -965,36 +1417,19 @@ class _UuMobileHomeState extends State<UuMobileHome> {
   }
 
   void _openSupport() {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('在线客服'),
-        content: const Text('在线客服暂未接入，可通过“帮助与反馈”查看文档。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
+    showUuDialog<void>(
+      context,
+      title: translate('Online support'),
+      message: translate('Online support is not available yet. See Help and feedback for documentation.'),
+      actions: [
+        uuDialogFilledButton(translate('Got it'), () => Navigator.of(context).pop()),
+      ],
     );
   }
 
   void _openSettings() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: _bg,
-          appBar: AppBar(
-            backgroundColor: Colors.white,
-            foregroundColor: UuTheme.textPrimary,
-            elevation: 0,
-            centerTitle: true,
-            title: const Text('设置'),
-          ),
-          body: SettingsPage(),
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => const UuSettingsPage()),
     );
   }
 
@@ -1005,11 +1440,12 @@ class _UuMobileHomeState extends State<UuMobileHome> {
     }
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: UuColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) {
+        UuColors.apply(sheetContext);
         final displayName = gFFI.userModel.displayNameOrUserName;
         final userName = gFFI.userModel.userName.value;
         return SafeArea(
@@ -1020,7 +1456,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
               children: [
                 const CircleAvatar(
                   radius: 30,
-                  backgroundColor: Color(0xFF3B82F6),
+                  backgroundColor: UuColors.primary,
                   child: Icon(Icons.person, color: Colors.white, size: 38),
                 ),
                 const SizedBox(height: 12),
@@ -1028,7 +1464,7 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                   displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
@@ -1037,30 +1473,32 @@ class _UuMobileHomeState extends State<UuMobileHome> {
                 const SizedBox(height: 4),
                 Text(
                   '@$userName',
-                  style: const TextStyle(color: _muted, fontSize: 13),
+                  style: TextStyle(color: _muted, fontSize: 13),
                 ),
                 const SizedBox(height: 18),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.sync, color: UuTheme.accent),
-                  title: const Text('刷新设备'),
+                  title: Text(translate('Refresh devices')),
                   onTap: () async {
                     Navigator.of(sheetContext).pop();
-                    await UserModel.updateOtherModels();
+                    await uuRefreshDevices();
                     _queryOnlineStatuses();
                     if (mounted) setState(() {});
-                    showToast('设备已刷新');
                   },
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.logout, color: Color(0xFFE5484D)),
-                  title: const Text(
-                    '退出登录',
-                    style: TextStyle(color: Color(0xFFE5484D)),
+                  leading: const Icon(Icons.logout, color: UuColors.danger),
+                  title: Text(
+                    translate('Sign out'),
+                    style: TextStyle(color: UuColors.danger),
                   ),
                   onTap: () async {
                     Navigator.of(sheetContext).pop();
+                    if (!await uuConfirmLogout(context)) {
+                      return;
+                    }
                     await gFFI.userModel.logOut();
                     if (mounted) setState(() {});
                   },
@@ -1084,7 +1522,7 @@ class _AllDevicesPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFEDEFF3),
+      color: UuColors.hover,
       borderRadius: BorderRadius.circular(99),
       child: InkWell(
         borderRadius: BorderRadius.circular(99),
@@ -1093,12 +1531,12 @@ class _AllDevicesPill extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.monitor_outlined,
+            children: [
+              Icon(Icons.grid_view,
                   size: 17, color: UuTheme.textPrimary),
               SizedBox(width: 6),
               Text(
-                '全部设备',
+                translate('All devices'),
                 style: TextStyle(
                   color: UuTheme.textPrimary,
                   fontSize: 15,
@@ -1136,8 +1574,8 @@ class _SectionHeader extends StatelessWidget {
           children: [
             Text(
               title,
-              style: const TextStyle(
-                color: Color(0xFF6B7280),
+              style: TextStyle(
+                color: UuColors.textSecondary,
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
               ),
@@ -1146,7 +1584,7 @@ class _SectionHeader extends StatelessWidget {
             Icon(
               collapsed ? Icons.expand_more : Icons.expand_less,
               size: 19,
-              color: const Color(0xFF6B7280),
+              color: UuColors.textSecondary,
             ),
           ],
         ),
@@ -1175,16 +1613,16 @@ class _OnlineBadge extends StatelessWidget {
             width: 7,
             height: 7,
             decoration: BoxDecoration(
-              color: online ? const Color(0xFF22C55E) : const Color(0xFF9CA3AF),
+              color: online ? UuColors.success : UuColors.textTertiary,
               shape: BoxShape.circle,
             ),
           ),
           const SizedBox(width: 4),
           Text(
-            online ? '在线' : '离线',
+            online ? translate('Online') : translate('Offline'),
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1194,32 +1632,6 @@ class _OnlineBadge extends StatelessWidget {
   }
 }
 
-class _SheetEmpty extends StatelessWidget {
-  const _SheetEmpty({required this.icon, required this.message});
-
-  final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: const Color(0xFFC7CBD3)),
-          const SizedBox(height: 12),
-          Text(
-            message,
-            style: const TextStyle(
-              color: Color(0xFF8A8F99),
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _UuSimplePage extends StatelessWidget {
   const _UuSimplePage({
@@ -1234,10 +1646,11 @@ class _UuSimplePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F7),
+      backgroundColor: UuColors.background,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: UuColors.surface,
         foregroundColor: UuTheme.textPrimary,
         elevation: 0,
         centerTitle: true,
@@ -1247,12 +1660,12 @@ class _UuSimplePage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 52, color: const Color(0xFFC7CBD3)),
+            Icon(icon, size: 52, color: UuColors.textTertiary),
             const SizedBox(height: 14),
             Text(
               message,
-              style: const TextStyle(
-                color: Color(0xFF8A8F99),
+              style: TextStyle(
+                color: UuColors.textSecondary,
                 fontSize: 14,
               ),
             ),

@@ -31,6 +31,7 @@ import 'package:window_size/window_size.dart' as window_size;
 import '../consts.dart';
 import 'common/widgets/overlay.dart';
 import 'custom_ui/uu_defaults.dart';
+import 'custom_ui/widgets/uu_menu.dart';
 import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'mobile/pages/view_camera_page.dart';
@@ -752,7 +753,7 @@ Future<void> windowOnTop(int? id) async {
   }
 }
 
-typedef DialogBuilder = CustomAlertDialog Function(
+typedef DialogBuilder = Widget Function(
     StateSetter setState, void Function([dynamic]) close, BuildContext context);
 
 class Dialog<T> {
@@ -791,6 +792,10 @@ class OverlayDialogManager {
 
   OverlayEntry? _mobileActionsOverlayEntry;
   RxBool mobileActionsOverlayVisible = true.obs;
+
+  /// Optional loading content for custom clients; null keeps the stock dialog.
+  static Widget Function(String text, VoidCallback cancel, bool showCancel)?
+      loadingBuilder;
 
   setMobileActionsOverlayVisible(bool v, {store = true}) {
     if (store) {
@@ -904,6 +909,11 @@ class OverlayDialogManager {
         if (onCancel != null) {
           onCancel();
         }
+      }
+
+      final loadingBuilder = OverlayDialogManager.loadingBuilder;
+      if (loadingBuilder != null) {
+        return loadingBuilder(translate(text), cancel, showCancel);
       }
 
       return CustomAlertDialog(
@@ -3721,51 +3731,67 @@ class ComboBox extends StatelessWidget {
     }
     var ref = values[index].obs;
     current = keys[index];
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: enabled
-              ? MyTheme.color(context).border2 ?? MyTheme.border
-              : MyTheme.border,
+    return Obx(() {
+      final selectedValue = ref.value;
+      final trigger = Container(
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: enabled
+                ? MyTheme.color(context).border2 ?? MyTheme.border
+                : MyTheme.border,
+          ),
+          borderRadius:
+              BorderRadius.circular(8), //border raiuds of dropdown button
         ),
-        borderRadius:
-            BorderRadius.circular(8), //border raiuds of dropdown button
-      ),
-      height: 42, // should be the height of a TextField
-      child: Obx(() => DropdownButton<String>(
-            isExpanded: true,
-            value: ref.value,
-            elevation: 16,
-            underline: Container(),
-            style: TextStyle(
-                color: enabled
-                    ? Theme.of(context).textTheme.titleMedium?.color
-                    : disabledTextColor(context, enabled)),
-            icon: const Icon(
-              Icons.expand_more_sharp,
-              size: 20,
-            ).marginOnly(right: 15),
-            onChanged: enabled
-                ? (String? newValue) {
-                    if (newValue != null && newValue != ref.value) {
-                      ref.value = newValue;
-                      current = newValue;
-                      onChanged(keys[values.indexOf(newValue)]);
-                    }
-                  }
-                : null,
-            items: values.map<DropdownMenuItem<String>>((String value) {
-              return DropdownMenuItem<String>(
-                value: value,
-                child: Text(
-                  value,
-                  style: const TextStyle(fontSize: 15),
-                  overflow: TextOverflow.ellipsis,
-                ).marginOnly(left: 15),
-              );
-            }).toList(),
-          )),
-    ).marginOnly(bottom: 5);
+        height: 42, // should be the height of a TextField
+        padding: const EdgeInsets.only(left: 15, right: 15),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                selectedValue,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 15,
+                    color: enabled
+                        ? Theme.of(context).textTheme.titleMedium?.color
+                        : disabledTextColor(context, enabled)),
+              ),
+            ),
+            const Icon(Icons.expand_more_sharp, size: 20),
+          ],
+        ),
+      );
+      if (!enabled) {
+        return trigger.marginOnly(bottom: 5);
+      }
+      return LayoutBuilder(
+        builder: (context, constraints) => UuMenuButton<String>(
+          width: constraints.maxWidth.isFinite
+              ? max(200.0, constraints.maxWidth)
+              : 200.0,
+          maxHeight: 320,
+          entriesBuilder: (context) => [
+            for (final key in keys)
+              UuMenuItem(
+                value: key,
+                label: values[keys.indexOf(key)],
+                selected: values[keys.indexOf(key)] == selectedValue,
+              ),
+          ],
+          onSelected: (key) {
+            final newValue = values[keys.indexOf(key)];
+            if (newValue != ref.value) {
+              ref.value = newValue;
+              current = key;
+              onChanged(key);
+            }
+          },
+          child: trigger,
+        ).marginOnly(bottom: 5),
+      );
+    });
   }
 }
 

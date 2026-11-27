@@ -1,18 +1,18 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart' hide Dialog;
-import 'package:flutter_hbb/models/platform_model.dart';
-import 'package:flutter_hbb/models/user_model.dart';
-import 'package:flutter_hbb/utils/http_service.dart' as http;
 
+import 'design/uu_tokens.dart';
 import 'theme.dart';
+import 'uu_auth.dart';
+import 'widgets/uu_account.dart';
+import 'widgets/uu_feedback.dart';
 
 /// UU 风格的登录 / 注册弹窗。
 ///
 /// 成功后写入 `access_token` 与 `user_info`，与内置登录弹窗的持久化方式一致，
-/// 之后由 [UserModel.refreshCurrentUser] 拉取账号地址簿。
+/// 之后由账号模型拉取账号地址簿。
 Future<bool?> uuLoginDialog(BuildContext context) {
   return showDialog<bool>(
     context: context,
@@ -23,18 +23,22 @@ Future<bool?> uuLoginDialog(BuildContext context) {
 /// 已登录时展示账号信息与退出入口，未登录时打开登录弹窗。
 Future<void> uuAccountDialog(BuildContext context) async {
   if (!gFFI.userModel.isLogin) {
-    await uuLoginDialog(context);
+    final ok = await uuLoginDialog(context);
+    if (ok == true) {
+      uuToast(translate('Signed in'));
+    }
     return;
   }
   await showDialog<void>(
     context: context,
     builder: (dialogContext) {
+      UuColors.apply(dialogContext);
       final displayName = gFFI.userModel.displayNameOrUserName;
       final userName = gFFI.userModel.userName.value;
       final initial =
           displayName.isEmpty ? '?' : displayName.substring(0, 1).toUpperCase();
       return Dialog(
-        backgroundColor: Colors.white,
+        backgroundColor: UuColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 340),
@@ -60,7 +64,7 @@ Future<void> uuAccountDialog(BuildContext context) async {
                   displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
@@ -69,7 +73,7 @@ Future<void> uuAccountDialog(BuildContext context) async {
                 const SizedBox(height: 4),
                 Text(
                   '@$userName',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textSecondary,
                     fontSize: 12,
                   ),
@@ -81,35 +85,37 @@ Future<void> uuAccountDialog(BuildContext context) async {
                       child: OutlinedButton(
                         onPressed: () async {
                           Navigator.pop(dialogContext);
-                          await UserModel.updateOtherModels();
-                          showToast('设备已刷新');
+                          await uuRefreshDevices();
                         },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: UuTheme.textPrimary,
-                          side: const BorderSide(color: UuTheme.divider),
+                          side: BorderSide(color: UuTheme.divider),
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        child: const Text('刷新设备'),
+                        child: Text(translate('Refresh devices')),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: () {
+                        onPressed: () async {
                           Navigator.pop(dialogContext);
-                          unawaited(gFFI.userModel.logOut());
+                          if (!await uuConfirmLogout(context)) {
+                            return;
+                          }
+                          await gFFI.userModel.logOut();
                         },
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFE5484D),
+                          backgroundColor: UuColors.danger,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        child: const Text('退出登录'),
+                        child: Text(translate('Sign out')),
                       ),
                     ),
                   ],
@@ -153,20 +159,15 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
     final username = _username.text.trim();
     final password = _password.text;
     if (username.isEmpty) {
-      setState(() => _error = '请输入用户名');
+      setState(() => _error = translate('Please enter a username'));
       return;
     }
     if (password.length < 6) {
-      setState(() => _error = '密码至少需要 6 个字符');
+      setState(() => _error = translate('Password must be at least 6 characters'));
       return;
     }
     if (_register && password != _confirm.text) {
-      setState(() => _error = '两次输入的密码不一致');
-      return;
-    }
-    final apiServer = await bind.mainGetApiServer();
-    if (apiServer.isEmpty) {
-      setState(() => _error = '未配置账号服务器');
+      setState(() => _error = translate('Passwords do not match'));
       return;
     }
     setState(() {
@@ -174,62 +175,25 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
       _error = null;
     });
     try {
-      Object deviceInfo = const <String, dynamic>{};
-      try {
-        deviceInfo = jsonDecode(bind.mainGetLoginDeviceInfo());
-      } catch (_) {}
-      final body = <String, dynamic>{
-        'username': username,
-        'password': password,
-        'id': await bind.mainGetMyId(),
-        'uuid': await bind.mainGetUuid(),
-        'deviceInfo': deviceInfo,
-      };
-      if (_register) {
-        body['type'] = 'account';
-        body['autoLogin'] = true;
-        final displayName = _displayName.text.trim();
-        if (displayName.isNotEmpty) {
-          body['display_name'] = displayName;
-        }
-      }
-      final resp = await http.post(
-        Uri.parse('$apiServer/api/${_register ? 'register' : 'login'}'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
+      await uuAuthRequest(
+        register: _register,
+        username: username,
+        password: password,
+        displayName: _register ? _displayName.text : null,
       );
-      Map<String, dynamic> data = const {};
-      try {
-        final decoded = jsonDecode(decode_http_response(resp));
-        if (decoded is Map<String, dynamic>) {
-          data = decoded;
-        }
-      } catch (_) {}
-      final error = data['error'];
-      if (resp.statusCode != 200 || error != null) {
-        setState(() => _error = error?.toString() ?? 'HTTP ${resp.statusCode}');
-        return;
-      }
-      final token = data['access_token']?.toString() ?? '';
-      if (token.isEmpty) {
-        setState(() => _error = '服务器返回的数据不完整');
-        return;
-      }
-      await bind.mainSetLocalOption(key: 'access_token', value: token);
-      await bind.mainSetLocalOption(
-        key: 'user_info',
-        value: jsonEncode(data['user'] ?? const <String, dynamic>{}),
-      );
-      gFFI.userModel.refreshCurrentUser();
       if (mounted) {
         Navigator.of(context).pop(true);
       }
+    } on UuAuthException catch (e) {
+      if (mounted) {
+        setState(() => _error = e.message);
+      }
     } catch (e) {
       if (mounted) {
-        setState(() => _error = '网络错误：$e');
+        setState(() => _error = translate('Network error: {$e}'));
       }
     } finally {
-      if (mounted && _busy) {
+      if (mounted) {
         setState(() => _busy = false);
       }
     }
@@ -257,7 +221,7 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
         prefixIcon: Icon(icon, size: 18, color: UuTheme.textSecondary),
         isDense: true,
         filled: true,
-        fillColor: const Color(0xFFF7F8FB),
+        fillColor: UuColors.background,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         border: OutlineInputBorder(
@@ -274,8 +238,9 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Dialog(
-      backgroundColor: Colors.white,
+      backgroundColor: UuColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 380),
@@ -288,8 +253,8 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
               Row(
                 children: [
                   Text(
-                    _register ? '创建账号' : '登录',
-                    style: const TextStyle(
+                    _register ? translate('Create account') : translate('Login'),
+                    style: TextStyle(
                       color: UuTheme.textPrimary,
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
@@ -298,7 +263,7 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                   const Spacer(),
                   IconButton(
                     onPressed: _busy ? null : () => Navigator.pop(context),
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close,
                       size: 20,
                       color: UuTheme.textSecondary,
@@ -307,8 +272,8 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                 ],
               ),
               Text(
-                _register ? '注册成功后，本机会自动加入账号设备列表' : '登录后即可看到并连接该账号下的所有设备',
-                style: const TextStyle(
+                _register ? translate('After registering, this device joins your account device list automatically') : translate('Sign in to see and connect to all devices in this account'),
+                style: TextStyle(
                   color: UuTheme.textSecondary,
                   fontSize: 12,
                 ),
@@ -316,14 +281,14 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
               const SizedBox(height: 20),
               _field(
                 controller: _username,
-                label: '用户名',
+                label: translate('Username'),
                 icon: Icons.person_outline,
                 autofocus: true,
               ),
               const SizedBox(height: 12),
               _field(
                 controller: _password,
-                label: '密码',
+                label: translate('Password'),
                 icon: Icons.lock_outline,
                 obscure: true,
               ),
@@ -331,14 +296,14 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                 const SizedBox(height: 12),
                 _field(
                   controller: _confirm,
-                  label: '确认密码',
+                  label: translate('Confirm password'),
                   icon: Icons.lock_outline,
                   obscure: true,
                 ),
                 const SizedBox(height: 12),
                 _field(
                   controller: _displayName,
-                  label: '昵称（可选）',
+                  label: translate('Display name (optional)'),
                   icon: Icons.badge_outlined,
                 ),
               ],
@@ -347,7 +312,7 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                 Text(
                   _error!,
                   style: const TextStyle(
-                    color: Color(0xFFDC2626),
+                    color: UuColors.danger,
                     fontSize: 12,
                   ),
                 ),
@@ -373,7 +338,7 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                           ),
                         )
                       : Text(
-                          _register ? '注册并登录' : '登录',
+                          _register ? translate('Register and sign in') : translate('Login'),
                           style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
@@ -390,7 +355,7 @@ class _UuAuthDialogState extends State<_UuAuthDialog> {
                           _error = null;
                         }),
                 child: Text(
-                  _register ? '已有账号？去登录' : '还没有账号？立即注册',
+                  _register ? translate('Already have an account? Sign in') : translate('No account yet? Register now'),
                   style: const TextStyle(color: UuTheme.accent, fontSize: 13),
                 ),
               ),

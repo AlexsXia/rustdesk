@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common.dart' show translate;
 import 'package:flutter_hbb/models/model.dart';
 
 const _kKbBg = Color(0xFF1C1C1E);
@@ -31,9 +32,9 @@ class UuKeyboardHeader extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 16),
-          _tab('输入法', !pcSelected, onImeKeyboard),
+          _tab(translate('IME'), !pcSelected, onImeKeyboard),
           const SizedBox(width: 22),
-          _tab('电脑键盘', pcSelected, onPcKeyboard),
+          _tab(translate('Computer keyboard'), pcSelected, onPcKeyboard),
           const Spacer(),
           IconButton(
             onPressed: onClose,

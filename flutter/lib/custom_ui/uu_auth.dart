@@ -22,7 +22,7 @@ Future<Map<String, dynamic>> uuAuthRequest({
 }) async {
   final apiServer = await bind.mainGetApiServer();
   if (apiServer.isEmpty) {
-    throw UuAuthException('未配置账号服务器');
+    throw UuAuthException(translate('Account server is not configured'));
   }
   Object deviceInfo = const <String, dynamic>{};
   try {
@@ -61,7 +61,7 @@ Future<Map<String, dynamic>> uuAuthRequest({
   }
   final token = data['access_token']?.toString() ?? '';
   if (token.isEmpty) {
-    throw UuAuthException('服务器返回的数据不完整');
+    throw UuAuthException(translate('The server returned incomplete data'));
   }
   await bind.mainSetLocalOption(key: 'access_token', value: token);
   await bind.mainSetLocalOption(

@@ -21,6 +21,8 @@ import 'package:get/get.dart';
 import 'package:bot_toast/bot_toast.dart';
 
 import '../../common/widgets/dialog.dart';
+import '../../custom_ui/desktop/uu_remote_tab_bar.dart';
+import '../../custom_ui/widgets/uu_exit_confirm.dart';
 import '../../models/platform_model.dart';
 
 class _MenuTheme {
@@ -135,6 +137,10 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       backgroundColor: Theme.of(context).colorScheme.background,
       body: DesktopTab(
         controller: tabController,
+        barBuilder: bind.mainGetLocalOption(key: 'custom-ui') != 'N'
+            ? () => UuRemoteTabBar(controller: tabController)
+            : null,
+        barHeight: 44,
         onWindowCloseButton: handleWindowCloseButton,
         tail: Row(
           mainAxisSize: MainAxisSize.min,
@@ -392,6 +398,15 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
 
   Future<bool> handleWindowCloseButton() async {
     final connLength = tabController.length;
+    if (connLength > 0 &&
+        bind.mainGetLocalOption(key: 'custom-ui') != 'N') {
+      if (uuWindowExitConfirmed) {
+        uuWindowExitConfirmed = false;
+      } else if (!await uuConfirmDisconnect(context,
+          tabCount: connLength)) {
+        return false;
+      }
+    }
     if (connLength == 1) {
       if (await desktopTryShowTabAuditDialogCloseCancelled(
         id: tabController.state.value.tabs[0].key,

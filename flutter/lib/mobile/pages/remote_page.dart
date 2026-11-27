@@ -28,9 +28,13 @@ import '../../custom_ui/mobile/uu_mini_window.dart';
 import '../../custom_ui/mobile/uu_pip.dart';
 import '../../custom_ui/mobile/uu_session_panel.dart';
 import '../../custom_ui/mobile/uu_session_toolbar.dart';
+import '../../custom_ui/mobile/uu_session_top_bar.dart';
+import '../../custom_ui/mobile/uu_trackpad.dart';
+import '../../custom_ui/uu_defaults.dart';
 import '../../custom_ui/uu_keymap.dart';
 import '../../custom_ui/uu_session_intent.dart';
 import '../../custom_ui/uu_wallpaper.dart';
+import '../../custom_ui/widgets/uu_exit_confirm.dart';
 import '../../models/shortcut_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
@@ -561,6 +565,34 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     _physicalFocusNode.requestFocus();
   }
 
+  void _showUuSessionPanel() {
+    if (!mounted) return;
+    setState(() => _showEdit = false);
+    showUuSessionPanel(
+      context,
+      widget.id,
+      gFFI,
+      onChat: () => onPressedTextChat(widget.id),
+      onSmallWindow: _enterUuSmallWindow,
+      onKeymapChanged: () {
+        if (mounted) setState(() {});
+      },
+      onEditKeymap: _editUuKeymap,
+    );
+  }
+
+  Future<void> _confirmExit() async {
+    if (_uuCustomUi) {
+      final alias = bind.mainGetPeerOptionSync(id: widget.id, key: 'alias');
+      final ok = await uuConfirmDisconnect(
+        context,
+        peerName: alias.isNotEmpty ? alias : widget.id,
+      );
+      if (!ok || !mounted) return;
+    }
+    clientClose(sessionId, gFFI);
+  }
+
   void _enterUuSmallWindow() {
     if (!UuPip.supported) {
       enterUuMiniWindow(context, widget.id, gFFI);
@@ -597,7 +629,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
     return WillPopScope(
       onWillPop: () async {
-        clientClose(sessionId, gFFI);
+        await _confirmExit();
         return false;
       },
       child: Scaffold(
@@ -646,42 +678,55 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       : Offstage(),
                 ],
               )),
-          body: Obx(
-            () => getRawPointerAndKeyBody(Overlay(
-              initialEntries: [
-                OverlayEntry(builder: (context) {
-                  return Container(
-                    color: kColorCanvas,
-                    child: isWebDesktop
-                        ? getBodyForDesktopWithListener()
-                        : SafeArea(
-                            child:
-                                OrientationBuilder(builder: (ctx, orientation) {
-                              if (_currentOrientation != orientation) {
-                                Timer(const Duration(milliseconds: 200), () {
-                                  gFFI.dialogManager
-                                      .resetMobileActionsOverlay(ffi: gFFI);
-                                  _currentOrientation = orientation;
-                                  gFFI.canvasModel.updateViewStyle();
-                                });
-                              }
-                              return Container(
-                                color: MyTheme.canvasColor,
-                                child: inputModel.isPhysicalMouse.value
-                                    ? getBodyForMobile()
-                                    : RawTouchGestureDetectorRegion(
-                                        child: getBodyForMobile(),
-                                        ffi: gFFI,
-                                      ),
-                              );
-                            }),
-                          ),
-                  );
-                })
-              ],
-            )),
-          )),
-    );
+          body: Stack(
+            children: [
+              Obx(
+                () => getRawPointerAndKeyBody(Overlay(
+                  initialEntries: [
+                    OverlayEntry(builder: (context) {
+                      return Container(
+                        color: kColorCanvas,
+                        child: isWebDesktop
+                            ? getBodyForDesktopWithListener()
+                            : SafeArea(
+                                child: OrientationBuilder(
+                                    builder: (ctx, orientation) {
+                                  if (_currentOrientation != orientation) {
+                                    Timer(const Duration(milliseconds: 200), () {
+                                      gFFI.dialogManager
+                                          .resetMobileActionsOverlay(ffi: gFFI);
+                                      _currentOrientation = orientation;
+                                      gFFI.canvasModel.updateViewStyle();
+                                    });
+                                  }
+                                  return Container(
+                                    color: MyTheme.canvasColor,
+                                    child: inputModel.isPhysicalMouse.value
+                                        ? getBodyForMobile()
+                                        : _wrapTouchInput(getBodyForMobile()),
+                                  );
+                                }),
+                              ),
+                      );
+                    })
+                  ],
+                )),
+              ),
+              if (_uuCustomUi)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: UuSessionTopBar(
+                    id: widget.id,
+                    ffi: gFFI,
+                    onExit: _confirmExit,
+                    onMore: _showUuSessionPanel,
+                  ),
+                ),
+            ],
+          ),
+        ));
   }
 
   bool _handleLocalKeyEvent(KeyEvent event) => handleMobileLocalKeyEvent(event,
@@ -715,21 +760,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       return UuSessionToolbar(
         ffi: gFFI,
         onKeyboard: _openUuKeyboard,
-        onPanel: () {
-          setState(() => _showEdit = false);
-          showUuSessionPanel(
-            context,
-            widget.id,
-            gFFI,
-            onChat: () => onPressedTextChat(widget.id),
-            onShowGestureHelp: () => setState(() => _showGestureHelp = true),
-            onSmallWindow: _enterUuSmallWindow,
-            onKeymapChanged: () {
-              if (mounted) setState(() {});
-            },
-            onEditKeymap: _editUuKeymap,
-          );
-        },
+        onPanel: _showUuSessionPanel,
       );
     }
     final ffiModel = Provider.of<FfiModel>(context);
@@ -835,12 +866,41 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       !gFFI.canvasModel.cursorEmbedded &&
       !gFFI.inputModel.relativeMouseMode.value;
 
+  Widget _wrapTouchInput(Widget child) {
+    if (!_uuCustomUi) {
+      return RawTouchGestureDetectorRegion(child: child, ffi: gFFI);
+    }
+    return ValueListenableBuilder<UuInputMode>(
+      valueListenable: uuInputModeNotifier,
+      builder: (context, mode, view) {
+        if (mode == UuInputMode.trackpad) {
+          return view!;
+        }
+        return RawTouchGestureDetectorRegion(child: view!, ffi: gFFI);
+      },
+      child: child,
+    );
+  }
+
   Widget getBodyForMobile() {
     return Container(
         color: MyTheme.canvasColor,
         child: Stack(children: () {
           final paints = [
             ImagePaint(ffiModel: gFFI.ffiModel),
+            if (_uuCustomUi)
+              // 放在叠加层之前：按键映射、虚拟鼠标等控件优先接收触摸，
+              // 其余区域的原始指针事件交给触控板处理。
+              Positioned.fill(
+                child: ValueListenableBuilder<UuInputMode>(
+                  valueListenable: uuInputModeNotifier,
+                  builder: (context, mode, _) =>
+                      mode == UuInputMode.trackpad
+                          ? UuTrackpadRegion(
+                              ffi: gFFI, child: const SizedBox.expand())
+                          : const SizedBox.shrink(),
+                ),
+              ),
             Positioned(
               top: 10,
               right: 10,

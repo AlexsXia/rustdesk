@@ -1,34 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common.dart';
 
-import '../theme.dart';
+/// One platform-icon mapping shared by every UU screen.
+class UuPeerPlatformIcon {
+  UuPeerPlatformIcon._();
 
-class UuPlatformIcon extends StatelessWidget {
-  const UuPlatformIcon(this.platform, {super.key, this.size = 44});
-
-  final String platform;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = platform.toLowerCase();
-    IconData icon = Icons.desktop_windows;
-    if (value.contains('mac')) {
-      icon = Icons.laptop_mac;
-    } else if (value.contains('linux')) {
-      icon = Icons.computer;
-    } else if (value.contains('android')) {
-      icon = Icons.phone_android;
-    } else if (value.contains('ios') || value.contains('iphone')) {
-      icon = Icons.phone_iphone;
+  static IconData iconFor(String platform) {
+    final p = platform.toLowerCase();
+    if (p.contains('mac')) {
+      return Icons.apple;
     }
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: UuTheme.accentSoft,
-        borderRadius: BorderRadius.circular(size * 0.3),
-      ),
-      child: Icon(icon, color: UuTheme.accent, size: size * 0.5),
-    );
+    if (p.contains('win')) {
+      return Icons.desktop_windows;
+    }
+    if (p.contains('ios') || p.contains('iphone') || p.contains('ipad')) {
+      return Icons.phone_iphone;
+    }
+    if (p.contains('android')) {
+      return Icons.phone_android;
+    }
+    if (p.contains('linux')) {
+      return Icons.computer;
+    }
+    return Icons.devices_other;
+  }
+
+  static IconData localIcon() {
+    if (isWindows) {
+      return Icons.desktop_windows;
+    }
+    if (isMacOS) {
+      return Icons.apple;
+    }
+    if (isLinux) {
+      return Icons.computer;
+    }
+    return Icons.devices_other;
   }
 }

@@ -1,5 +1,3 @@
-// Chinese-first strings for the private UU-style build; move them into
-// src/lang once the layout is settled.
 import 'dart:async';
 import 'dart:io';
 
@@ -8,21 +6,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/peer_card.dart';
-import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
+import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart'
+    show setPasswordDialog;
+import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/ab_model.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:flutter_hbb/models/server_model.dart';
+import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../design/uu_tokens.dart';
 import '../theme.dart';
 import '../uu_auth.dart';
 import '../uu_login_dialog.dart';
 import '../uu_peer.dart';
 import '../uu_settings_dialog.dart';
 import '../uu_wallpaper.dart';
+import '../widgets/uu_account.dart';
+import '../widgets/uu_buttons.dart';
+import '../widgets/uu_components.dart';
+import '../widgets/uu_feedback.dart';
+import '../widgets/uu_menu.dart';
+import '../widgets/uu_platform_icon.dart';
+import '../widgets/uu_rename_dialog.dart';
+import '../widgets/uu_window_controls.dart';
 
 class UuHomePage extends StatefulWidget {
   const UuHomePage({super.key});
@@ -45,10 +56,12 @@ class _UuHomePageState extends State<UuHomePage> {
   Timer? _abRefreshTimer;
   final Map<Peers, VoidCallback> _peersListeners = {};
   final _assistIdController = TextEditingController();
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
   final _assistGearKey = GlobalKey();
   bool _allowAssist = true;
   bool _showAssistPassword = false;
-  String _autoRefresh = '每次远控结束';
+  String _autoRefresh = 'after-session';
   Timer? _assistRefreshTimer;
 
   @override
@@ -57,12 +70,13 @@ class _UuHomePageState extends State<UuHomePage> {
     _heroImage = bind.mainGetLocalOption(key: 'custom-hero-image');
     bind.mainLoadRecentPeers();
     unawaited(uuSyncDeviceSecret());
+    _searchController.addListener(_onSearchChanged);
     _initOnlineTracking();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
-        await windowManager.setMinimumSize(const Size(760, 560));
-        await windowManager.setSize(const Size(920, 680));
+        await windowManager.setMinimumSize(const Size(900, 600));
+        await windowManager.setSize(const Size(1080, 720));
       } catch (_) {}
     });
   }
@@ -77,7 +91,14 @@ class _UuHomePageState extends State<UuHomePage> {
     });
     _peersListeners.clear();
     _assistIdController.dispose();
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
   void _initOnlineTracking() {
@@ -160,7 +181,7 @@ class _UuHomePageState extends State<UuHomePage> {
   Peer _demoPeer() {
     final peer = Peer.fromJson({
       'id': _demoId,
-      'alias': '演示设备',
+      'alias': translate('Demo devices'),
       'hostname': 'Demo PC',
       'platform': 'Windows',
       'username': 'demo',
@@ -168,6 +189,28 @@ class _UuHomePageState extends State<UuHomePage> {
     peer.online = true;
     peer.sameServer = true;
     return peer;
+  }
+
+  bool _matchesQuery(Peer peer) {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return true;
+    }
+    return uuPeerName(peer).toLowerCase().contains(query) ||
+        peer.id.toLowerCase().contains(query);
+  }
+
+  List<Peer> _recentPeers({int limit = 5}) {
+    final localId = _localId;
+    final result = <Peer>[];
+    for (final peer in gFFI.recentPeersModel.peers) {
+      if (peer.id.isEmpty) continue;
+      if (localId.isNotEmpty && peer.id == localId) continue;
+      if (_isIosPeer(peer)) continue;
+      result.add(peer);
+      if (result.length >= limit) break;
+    }
+    return result;
   }
 
   Peer? _selectedPeer(List<Peer> peers) {
@@ -195,7 +238,7 @@ class _UuHomePageState extends State<UuHomePage> {
     bool isViewCamera = false,
   }) {
     if (peer.id == _demoId) {
-      showToast('演示设备仅用于界面预览，请添加真实设备');
+      uuToast(translate('Demo devices are for preview only. Please add a real device.'));
       return;
     }
     final secret = _inAddressBook(peer) ? uuAccountDevicePassword() : '';
@@ -230,41 +273,30 @@ class _UuHomePageState extends State<UuHomePage> {
   }) async {
     final idController = TextEditingController();
     final passwordController = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(translate('Connect')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: idController,
-                autofocus: true,
-                decoration: InputDecoration(labelText: translate('ID')),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: passwordController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: translate('Password'),
-                ),
-              ),
-            ],
+    final ok = await showUuDialog<bool>(
+      context,
+      title: translate('Remote connection'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          UuTextField(
+            controller: idController,
+            autofocus: true,
+            hint: translate('Device ID'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(translate('Cancel')),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(translate('Connect')),
-            ),
-          ],
-        );
-      },
+          const SizedBox(height: 10),
+          UuTextField(
+            controller: passwordController,
+            obscure: true,
+            hint: translate('Password (optional)'),
+            onSubmitted: (_) => Navigator.of(context).pop(true),
+          ),
+        ],
+      ),
+      actions: [
+        uuDialogTextButton(translate('Cancel'), () => Navigator.of(context).pop(false)),
+        uuDialogFilledButton(translate('Connect'), () => Navigator.of(context).pop(true)),
+      ],
     );
     final id = idController.text.replaceAll(' ', '').trim();
     final password = passwordController.text;
@@ -293,94 +325,182 @@ class _UuHomePageState extends State<UuHomePage> {
   }
 
   Future<void> _showLocalInfo() async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(bind.mainGetAppNameSync()),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                translate('ID'),
-                style: const TextStyle(
-                  color: UuTheme.textSecondary,
-                  fontSize: 11,
-                ),
-              ),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: gFFI.serverModel.serverId,
-                builder: (context, value, child) {
-                  return SelectableText(
-                    value.text,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 12),
-              Text(
-                translate('One-time Password'),
-                style: const TextStyle(
-                  color: UuTheme.textSecondary,
-                  fontSize: 11,
-                ),
-              ),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: gFFI.serverModel.serverPasswd,
-                builder: (context, value, child) {
-                  return SelectableText(
-                    value.text,
-                    style: const TextStyle(fontSize: 13),
-                  );
-                },
-              ),
-            ],
+    await showUuDialog<void>(
+      context,
+      title: bind.mainGetAppNameSync(),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            translate('ID'),
+            style: TextStyle(
+              color: UuColors.textSecondary,
+              fontSize: 12,
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: _copyId,
-              child: Text(translate('Copied')),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: gFFI.serverModel.serverId,
+            builder: (context, value, child) {
+              return SelectableText(
+                value.text,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Text(
+            translate('One-time Password'),
+            style: TextStyle(
+              color: UuColors.textSecondary,
+              fontSize: 12,
             ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(translate('Cancel')),
-            ),
-          ],
-        );
-      },
+          ),
+          const SizedBox(height: 4),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: gFFI.serverModel.serverPasswd,
+            builder: (context, value, child) {
+              return SelectableText(
+                value.text,
+                style: const TextStyle(fontSize: 14),
+              );
+            },
+          ),
+        ],
+      ),
+      actions: [
+        uuDialogTextButton(translate('Copy ID'), _copyId),
+        uuDialogFilledButton(translate('Close'), () => Navigator.of(context).pop()),
+      ],
     );
   }
 
+  bool get _daemonProblem =>
+      isMacOS &&
+      !bind.isOutgoingOnly() &&
+      bind.mainIsInstalled() &&
+      (!bind.mainIsInstalledDaemon(prompt: false) ||
+          bind.mainGetOptionSync(key: 'stop-service') == 'Y');
+
   Future<void> _showNotifications() async {
-    final needs = _needsPermissions;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('通知'),
-          content: Text(
-            needs ? '有权限未授予，远程访问可能无法操作。' : '暂无通知。',
-          ),
-          actions: [
-            if (needs)
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(dialogContext);
-                  _requestPermissions();
-                },
-                child: const Text('配置'),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('关闭'),
+    final rows = <Widget>[];
+    if (_needsPermissions) {
+      rows.add(_notificationRow(
+        icon: Icons.shield_outlined,
+        title: translate('System permissions not fully granted'),
+        message: translate('Screen Recording, Accessibility, or Input Monitoring is off. Remote control may not work.'),
+        actionLabel: translate('Configure'),
+        onTap: () {
+          Navigator.of(context).pop();
+          _requestPermissions();
+        },
+      ));
+    }
+    if (_daemonProblem) {
+      final needInstall = !bind.mainIsInstalledDaemon(prompt: false);
+      rows.add(_notificationRow(
+        icon: Icons.dns_outlined,
+        title: needInstall ? translate('Service not installed') : translate('Service stopped'),
+        message: needInstall ? translate('Install it to let this Mac receive remote connections.') : translate('Start the service to receive remote connections.'),
+        actionLabel: needInstall ? translate('Install') : translate('Start'),
+        onTap: () async {
+          Navigator.of(context).pop();
+          if (needInstall) {
+            bind.mainIsInstalledDaemon(prompt: true);
+          } else {
+            await start_service(true);
+          }
+          if (mounted) setState(() {});
+        },
+      ));
+    }
+    if (!gFFI.userModel.isLogin) {
+      rows.add(_notificationRow(
+        icon: Icons.person_outline,
+        title: translate('Not signed in'),
+        message: translate('Sign in to sync your account devices automatically; no manual ID entry needed.'),
+        actionLabel: translate('Login'),
+        onTap: () {
+          Navigator.of(context).pop();
+          unawaited(uuAccountDialog(context));
+        },
+      ));
+    }
+    await showUuDialog<void>(
+      context,
+      title: translate('Notifications'),
+      content: rows.isEmpty
+          ? UuEmptyState(
+              icon: Icons.notifications_none_rounded,
+              title: translate('No notifications'),
+              message: translate('System permissions, the service, and your account are all in order.'),
+            )
+          : Column(mainAxisSize: MainAxisSize.min, children: rows),
+      actions: [
+        uuDialogFilledButton(translate('Close'), () => Navigator.of(context).pop()),
+      ],
+    );
+  }
+
+  Widget _notificationRow({
+    required IconData icon,
+    required String title,
+    required String message,
+    required String actionLabel,
+    required void Function() onTap,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 6, 12),
+      decoration: BoxDecoration(
+        color: UuColors.background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: UuColors.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: UuColors.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: UuColors.textSecondary,
+                    fontSize: 12,
+                    height: 1.4,
+                  ),
+                ),
+              ],
             ),
-          ],
-        );
-      },
+          ),
+          TextButton(
+            onPressed: onTap,
+            style: TextButton.styleFrom(
+              foregroundColor: UuColors.primary,
+              minimumSize: const Size(48, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(actionLabel, style: const TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -421,7 +541,7 @@ class _UuHomePageState extends State<UuHomePage> {
 
   void _copyId() {
     Clipboard.setData(ClipboardData(text: gFFI.serverModel.serverId.text));
-    showToast('已复制');
+    uuToast(translate('Copied'));
   }
 
   bool get _needsPermissions =>
@@ -436,29 +556,53 @@ class _UuHomePageState extends State<UuHomePage> {
     bind.mainIsCanInputMonitoring(prompt: true);
   }
 
+  Future<void> _logout() async {
+    if (!await uuConfirmLogout(context)) {
+      return;
+    }
+    await gFFI.userModel.logOut();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final sidebarWidth =
-            (constraints.maxWidth * 0.243).clamp(240.0, 400.0).toDouble();
-        return Container(
-          color: Colors.white,
-          child: Row(
-            children: [
-              SizedBox(width: sidebarWidth, child: _buildSidebar(context)),
-              const VerticalDivider(width: 1, color: UuTheme.divider),
-              Expanded(child: _buildMain(context)),
-            ],
-          ),
-        );
-      },
+    UuColors.apply(context);
+    return Focus(
+      autofocus: true,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyK, control: true):
+              _focusSearch,
+          const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
+              _focusSearch,
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final sidebarWidth =
+                (constraints.maxWidth * 0.243).clamp(240.0, 400.0).toDouble();
+            return Container(
+              color: UuColors.background,
+              child: Row(
+                children: [
+                  SizedBox(
+                      width: sidebarWidth, child: _buildSidebar(context)),
+                  VerticalDivider(width: 1, color: UuTheme.divider),
+                  Expanded(child: _buildMain(context)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
     );
+  }
+
+  void _focusSearch() {
+    _searchFocus.requestFocus();
   }
 
   Widget _buildSidebar(BuildContext context) {
     return Container(
-      color: const Color(0xFFF8F8F8),
+      color: UuColors.surface,
       child: AnimatedBuilder(
         animation: Listenable.merge([
           gFFI.recentPeersModel,
@@ -467,28 +611,45 @@ class _UuHomePageState extends State<UuHomePage> {
         builder: (context, child) {
           return Obx(() {
             final all = _allPeers();
+            final visible = all.where(_matchesQuery).toList();
             final selected = _selectedPeer(all);
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 52),
-                _sectionHeader('我的设备', Icons.devices_other),
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: (_) => windowManager.startDragging(),
+                  child: const SizedBox(
+                      height: 52, width: double.infinity),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: UuSearchField(
+                    controller: _searchController,
+                    focusNode: _searchFocus,
+                    hint: isMacOS ? translate('Search devices (⌘K)') : translate('Search devices (Ctrl+K)'),
+                  ),
+                ),
+                _sectionHeader(translate('My devices'), Icons.devices_other,
+                    count: all.isEmpty ? null : all.length),
                 if (all.isEmpty)
-                  _sideHint('暂无设备，点击右上角 + 添加')
+                  _sideHint(translate('No devices yet. Click + in the top-right to add one.'))
+                else if (visible.isEmpty)
+                  _sideHint(translate('No matching devices'))
                 else
-                  for (final peer in all) _deviceRow(peer, selected),
+                  for (final peer in visible) _deviceRow(peer, selected),
                 _allDevicesRow(),
                 const SizedBox(height: 12),
-                _sectionHeader('远程协助', Icons.support_agent),
+                _sectionHeader(translate('Remote assistance'), Icons.support_agent),
                 _assistRow(
                   Icons.add_to_queue,
-                  '开始协助',
+                  translate('Start assisting'),
                   () => setState(() => _page = _HomePage.assist),
                   selected: _page == _HomePage.assist,
                 ),
                 _assistRow(
                   Icons.star,
-                  '收藏设备',
+                  translate('Favorite devices'),
                   () => setState(() => _page = _HomePage.favorites),
                   selected: _page == _HomePage.favorites,
                 ),
@@ -501,7 +662,7 @@ class _UuHomePageState extends State<UuHomePage> {
     );
   }
 
-  Widget _sectionHeader(String title, IconData icon) {
+  Widget _sectionHeader(String title, IconData icon, {int? count}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 8, 14, 6),
       child: Row(
@@ -510,14 +671,31 @@ class _UuHomePageState extends State<UuHomePage> {
           const SizedBox(width: 6),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: UuTheme.textPrimary,
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
+          if (count != null) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                color: UuColors.hover,
+                borderRadius: BorderRadius.circular(UuRadius.pill),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  color: UuColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
           const Spacer(),
-          const Icon(
+          Icon(
             Icons.keyboard_arrow_up,
             size: 18,
             color: UuTheme.textSecondary,
@@ -534,7 +712,7 @@ class _UuHomePageState extends State<UuHomePage> {
         text,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: UuTheme.textSecondary, fontSize: 11),
+        style: TextStyle(color: UuTheme.textSecondary, fontSize: 12),
       ),
     );
   }
@@ -562,9 +740,9 @@ class _UuHomePageState extends State<UuHomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
           decoration: BoxDecoration(
             color: isSelected
-                ? const Color(0xFFDFDFDF)
+                ? UuColors.primarySoft
                 : isHovered
-                    ? const Color(0xFFECECEC)
+                    ? UuColors.hoverTint
                     : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -583,13 +761,17 @@ class _UuHomePageState extends State<UuHomePage> {
                 width: 26,
                 height: 26,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F0FF),
+                  color: peer.online
+                      ? UuColors.primarySoft
+                      : UuColors.hover,
                   borderRadius: BorderRadius.circular(7),
                 ),
-                child: const Icon(
-                  Icons.grid_view,
+                child: Icon(
+                  UuPeerPlatformIcon.iconFor(peer.platform),
                   size: 15,
-                  color: UuTheme.accent,
+                  color: peer.online
+                      ? UuColors.primary
+                      : UuColors.textTertiary,
                 ),
               ),
               const SizedBox(width: 9),
@@ -599,12 +781,30 @@ class _UuHomePageState extends State<UuHomePage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: UuTheme.textPrimary,
+                    color: isSelected ? UuTheme.accent : UuTheme.textPrimary,
                     fontSize: 13,
                     fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
               ),
+              if (isHovered && !isSelected)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _connectPeer(peer),
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: UuColors.primarySoft,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      size: 16,
+                      color: UuColors.primary,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -634,9 +834,9 @@ class _UuHomePageState extends State<UuHomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
           decoration: BoxDecoration(
             color: isSelected
-                ? const Color(0xFFDFDFDF)
+                ? UuColors.primarySoft
                 : isHovered
-                    ? const Color(0xFFECECEC)
+                    ? UuColors.hoverTint
                     : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -647,7 +847,7 @@ class _UuHomePageState extends State<UuHomePage> {
                 width: 26,
                 height: 26,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE8F0FF),
+                  color: UuColors.primarySoft,
                   borderRadius: BorderRadius.circular(7),
                 ),
                 child: const Icon(
@@ -657,12 +857,13 @@ class _UuHomePageState extends State<UuHomePage> {
                 ),
               ),
               const SizedBox(width: 9),
-              const Text(
-                '全部设备',
+              Text(
+                translate('All devices'),
                 style: TextStyle(
-                  color: UuTheme.textPrimary,
+                  color: isSelected ? UuTheme.accent : UuTheme.textPrimary,
                   fontSize: 13,
-                  fontWeight: FontWeight.w500,
+                  fontWeight:
+                      isSelected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
             ],
@@ -695,9 +896,9 @@ class _UuHomePageState extends State<UuHomePage> {
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
           decoration: BoxDecoration(
             color: selected
-                ? const Color(0xFFDFDFDF)
+                ? UuColors.primarySoft
                 : isHovered
-                    ? const Color(0xFFECECEC)
+                    ? UuColors.hoverTint
                     : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -708,10 +909,11 @@ class _UuHomePageState extends State<UuHomePage> {
               const SizedBox(width: 8),
               Text(
                 label,
-                style: const TextStyle(
-                  color: UuTheme.textPrimary,
+                style: TextStyle(
+                  color: selected ? UuTheme.accent : UuTheme.textPrimary,
                   fontSize: 13,
-                  fontWeight: FontWeight.w500,
+                  fontWeight:
+                      selected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
             ],
@@ -732,9 +934,9 @@ class _UuHomePageState extends State<UuHomePage> {
           final peers = _allPeers();
           final selected = _selectedPeer(peers);
           final pageTitle = switch (_page) {
-            _HomePage.allDevices => '全部设备',
-            _HomePage.assist => '远程协助',
-            _HomePage.favorites => '收藏设备',
+            _HomePage.allDevices => translate('All devices'),
+            _HomePage.assist => translate('Remote assistance'),
+            _HomePage.favorites => translate('Favorite devices'),
             _HomePage.home => null,
           };
           return Column(
@@ -743,12 +945,17 @@ class _UuHomePageState extends State<UuHomePage> {
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(38, 28, 38, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildDaemonBanner(),
-                      _buildPageContent(context, selected),
-                    ],
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 960),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildDaemonBanner(),
+                          _buildPageContent(context, selected),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -774,21 +981,21 @@ class _UuHomePageState extends State<UuHomePage> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7E6),
+        color: UuColors.warningSoft,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFFE0A3)),
+        border: Border.all(color: UuColors.warningBorder),
       ),
       child: Row(
         children: [
-          const Icon(Icons.dns_outlined, color: Color(0xFFD97706), size: 22),
+          const Icon(Icons.dns_outlined, color: UuColors.warningInk, size: 22),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  needInstall ? '安装被控服务' : '被控服务已停止',
-                  style: const TextStyle(
+                  needInstall ? translate('Install service') : translate('Service stopped'),
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -797,9 +1004,9 @@ class _UuHomePageState extends State<UuHomePage> {
                 const SizedBox(height: 3),
                 Text(
                   needInstall
-                      ? '安装后这台 Mac 才能接收手机等设备的远程连接'
-                      : '启动服务后才能接收远程连接',
-                  style: const TextStyle(
+                      ? translate('Install it to let this Mac receive remote connections from phones and other devices')
+                      : translate('Start the service to receive remote connections.'),
+                  style: TextStyle(
                     color: UuTheme.textSecondary,
                     fontSize: 12,
                   ),
@@ -818,13 +1025,13 @@ class _UuHomePageState extends State<UuHomePage> {
               if (mounted) setState(() {});
             },
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFD97706),
+              backgroundColor: UuColors.warningInk,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
             ),
-            child: Text(needInstall ? '安装' : '启动'),
+            child: Text(needInstall ? translate('Install') : translate('Start')),
           ),
         ],
       ),
@@ -841,19 +1048,208 @@ class _UuHomePageState extends State<UuHomePage> {
         const SizedBox(height: 14),
         _buildActionBar(context, peer: selected),
         const SizedBox(height: 28),
-        const Padding(
-          padding: EdgeInsets.only(left: 2, bottom: 8),
-          child: Text(
-            '快速启动',
-            style: TextStyle(
-              color: UuTheme.textPrimary,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
+        _buildRecentConnections(context),
+        const SizedBox(height: 26),
+        _buildTools(context),
+      ],
+    );
+  }
+
+  Widget _buildRecentConnections(BuildContext context) {
+    final peers = _recentPeers();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        UuSectionTitle(
+          translate('Recent connections'),
+          trailing: TextButton(
+            onPressed: () => setState(() => _page = _HomePage.allDevices),
+            style: TextButton.styleFrom(
+              foregroundColor: UuColors.textSecondary,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(translate('All devices'), style: TextStyle(fontSize: 12)),
+          ),
+        ),
+        if (peers.isEmpty)
+          UuCard(
+            bordered: true,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+            child: Row(
+              children: [
+                Icon(Icons.history_rounded,
+                    size: 20, color: UuColors.textTertiary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    translate('No recent connections. Enter a device ID or pick a device on the left to start.'),
+                    style: TextStyle(
+                      color: UuColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _showQuickConnect(),
+                  child: Text(translate('Enter ID'), style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+          )
+        else
+          for (final peer in peers) _recentRow(peer),
+      ],
+    );
+  }
+
+  Widget _recentRow(Peer peer) {
+    final hovered = _hoveredRow == 'recent:${peer.id}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hoveredRow = 'recent:${peer.id}'),
+        onExit: (_) {
+          if (_hoveredRow == 'recent:${peer.id}') {
+            setState(() => _hoveredRow = null);
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() {
+            _page = _HomePage.home;
+            _selectedId = peer.id;
+          }),
+          child: UuCard(
+            bordered: true,
+            color: hovered ? UuColors.hoverTint : null,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                _allDeviceIcon(UuPeerPlatformIcon.iconFor(peer.platform),
+                    online: peer.online),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        uuPeerName(peer),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: UuColors.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${translate(peer.online ? 'Online' : 'Offline')} · ${peer.platform.isEmpty ? peer.id : peer.platform}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: peer.online
+                              ? UuColors.success
+                              : UuColors.textTertiary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                UuPillButton(
+                  label: translate('Connect'),
+                  height: 32,
+                  onPressed: () => _connectPeer(peer),
+                ),
+              ],
             ),
           ),
         ),
-        _buildAddCard(context),
+      ),
+    );
+  }
+
+  Widget _buildTools(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        UuSectionTitle(translate('Quick tools')),
+        UuCard(
+          bordered: true,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(UuRadius.lg),
+            child: Row(
+              children: [
+                _toolTile(Icons.add_rounded, translate('Add device'),
+                    () => _showQuickConnect()),
+                _actionDivider(),
+                _toolTile(
+                  Icons.swap_horiz,
+                  translate('File transfer'),
+                  () => _showQuickConnect(isFileTransfer: true),
+                ),
+                _actionDivider(),
+                _toolTile(
+                  Icons.support_agent,
+                  translate('Remote assistance'),
+                  () => setState(() => _page = _HomePage.assist),
+                ),
+                _actionDivider(),
+                _toolTile(
+                  Icons.help_outline_rounded,
+                  translate('Help and feedback'),
+                  () =>
+                      unawaited(launchUrlString('https://rustdesk.com/docs/')),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
+    );
+  }
+
+  Widget _toolTile(IconData icon, String label, VoidCallback onTap) {
+    final hovered = _hoveredRow == 'tool:$label';
+    return Expanded(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hoveredRow = 'tool:$label'),
+        onExit: (_) {
+          if (_hoveredRow == 'tool:$label') {
+            setState(() => _hoveredRow = null);
+          }
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Container(
+            color: hovered ? UuColors.hoverTint : Colors.transparent,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Column(
+              children: [
+                Icon(icon, size: 22, color: UuColors.primary),
+                const SizedBox(height: 7),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: UuColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -882,17 +1278,155 @@ class _UuHomePageState extends State<UuHomePage> {
     final peers = _allPeers();
     final desktops = peers.where((p) => !_isMobilePeer(p)).toList();
     final mobiles = peers.where(_isMobilePeer).toList();
+    final syncHint = peers.isEmpty ? _accountSyncHint() : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _groupHeader('电脑 ${desktops.length + 1}'),
-        _localDeviceRow(),
-        for (final peer in desktops) _allDeviceRow(peer),
+        if (syncHint != null) ...[
+          syncHint,
+          const SizedBox(height: 18),
+        ],
+        _groupHeader(translate('Computers: {${desktops.length + 1}}')),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _deviceCard(
+              name: Platform.localHostname,
+              id: _localId,
+              online: true,
+              icon: UuPeerPlatformIcon.localIcon(),
+              local: true,
+              onTap: _showLocalInfo,
+              onInfo: _showLocalInfo,
+            ),
+            for (final peer in desktops)
+              _deviceCard(
+                name: uuPeerName(peer),
+                id: peer.id,
+                online: peer.online,
+                icon: UuPeerPlatformIcon.iconFor(peer.platform),
+                onTap: () => setState(() {
+                  _page = _HomePage.home;
+                  _selectedId = peer.id;
+                }),
+                onInfo: () => _showPeerInfo(peer),
+              ),
+          ],
+        ),
         const SizedBox(height: 22),
-        _groupHeader('手机/平板 ${mobiles.length}'),
-        for (final peer in mobiles) _allDeviceRow(peer),
+        _groupHeader(translate('Phones/tablets: {${mobiles.length}}')),
+        if (mobiles.isEmpty)
+          _groupHint(translate('No phones or tablets yet. Sign in and sync your account to see them here.'))
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final peer in mobiles)
+                _deviceCard(
+                  name: uuPeerName(peer),
+                  id: peer.id,
+                  online: peer.online,
+                  icon: UuPeerPlatformIcon.iconFor(peer.platform),
+                  onTap: () => setState(() {
+                    _page = _HomePage.home;
+                    _selectedId = peer.id;
+                  }),
+                  onInfo: () => _showPeerInfo(peer),
+                ),
+            ],
+          ),
       ],
     );
+  }
+
+  Widget _groupHint(String text) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      decoration: BoxDecoration(
+        color: UuColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: UuColors.divider),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(color: UuColors.textSecondary, fontSize: 13),
+      ),
+    );
+  }
+
+  Widget? _accountSyncHint() {
+    if (!gFFI.userModel.isLogin) {
+      return null;
+    }
+    final error = gFFI.abModel.abPullError.value;
+    if (error.isNotEmpty) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        decoration: BoxDecoration(
+          color: UuColors.warningSoft,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: UuColors.warningBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off_outlined,
+                size: 20, color: UuColors.warningInk),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    translate('Failed to sync account devices'),
+                    style: TextStyle(
+                      color: UuColors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    error,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: UuColors.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => unawaited(
+                  gFFI.abModel.pullAb(force: ForcePullAb.current, quiet: true)),
+              child: Text(translate('Try again'), style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      );
+    }
+    if (gFFI.abModel.currentAbLoading.value) {
+      return Row(
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: UuColors.primary,
+            ),
+          ),
+          SizedBox(width: 10),
+          Text(
+            translate('Syncing account devices...'),
+            style: TextStyle(color: UuColors.textSecondary, fontSize: 13),
+          ),
+        ],
+      );
+    }
+    return null;
   }
 
   Widget _groupHeader(String title) {
@@ -900,7 +1434,7 @@ class _UuHomePageState extends State<UuHomePage> {
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.keyboard_arrow_down,
             size: 22,
             color: UuTheme.textSecondary,
@@ -908,7 +1442,7 @@ class _UuHomePageState extends State<UuHomePage> {
           const SizedBox(width: 8),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               color: UuTheme.textPrimary,
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -919,153 +1453,216 @@ class _UuHomePageState extends State<UuHomePage> {
     );
   }
 
-  Widget _localDeviceRow() {
+  Widget _deviceCard({
+    required String name,
+    required String id,
+    required bool online,
+    required IconData icon,
+    required VoidCallback onTap,
+    VoidCallback? onInfo,
+    bool local = false,
+  }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      width: 268,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: UuTheme.divider),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: _showLocalInfo,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              _allDeviceIcon(Icons.laptop_mac),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  Platform.localHostname,
+      child: Material(
+        color: UuColors.surface,
+        child: InkWell(
+          hoverColor: UuColors.hoverTint,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _allDeviceIcon(icon, online: local || online),
+                    const Spacer(),
+                    if (local)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: UuColors.primarySoft,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          translate('This device'),
+                          style:
+                              TextStyle(color: UuColors.primary, fontSize: 12),
+                        ),
+                      )
+                    else
+                      _statusText(online),
+                    if (onInfo != null)
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onInfo,
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(6, 2, 2, 2),
+                          child: Icon(
+                            Icons.info_outline,
+                            size: 18,
+                            color: UuColors.textTertiary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: UuTheme.textPrimary,
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEAF0FF),
-                  borderRadius: BorderRadius.circular(4),
+                const SizedBox(height: 4),
+                Text(
+                  local ? translate('This device · ID {$id}') : 'ID $id',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: UuColors.textSecondary,
+                    fontSize: 12,
+                  ),
                 ),
-                child: const Text(
-                  '本机',
-                  style: TextStyle(color: UuTheme.accent, fontSize: 11),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.info_outline,
-                size: 20,
-                color: UuTheme.textSecondary,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _allDeviceRow(Peer peer) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: UuTheme.divider),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => setState(() {
-          _page = _HomePage.home;
-          _selectedId = peer.id;
-        }),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              _allDeviceIcon(Icons.grid_view),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  uuPeerName(peer),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: UuTheme.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _showPeerInfo(peer),
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.info_outline,
-                    size: 20,
-                    color: UuTheme.textSecondary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              const Icon(
-                Icons.keyboard_arrow_right,
-                size: 22,
-                color: UuTheme.textSecondary,
-              ),
-            ],
-          ),
+  Widget _statusText(bool online) {
+    final color = online ? UuColors.success : UuColors.textTertiary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
-      ),
+        const SizedBox(width: 4),
+        Text(online ? translate('Online') : translate('Offline'),
+            style: TextStyle(color: color, fontSize: 12)),
+      ],
     );
   }
 
-  Widget _allDeviceIcon(IconData icon) {
+  Widget _allDeviceIcon(IconData icon, {bool online = true}) {
     return Container(
       width: 42,
       height: 42,
       decoration: BoxDecoration(
-        color: const Color(0xFF2F6BFF),
+        color: online ? UuColors.primary : UuColors.border,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Icon(icon, color: Colors.white, size: 24),
+      child: Icon(icon,
+          color: online ? Colors.white : UuColors.textTertiary, size: 24),
     );
   }
 
   void _showPeerInfo(Peer peer) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(uuPeerName(peer)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('ID: ${peer.id}'),
-              Text('平台: ${peer.platform}'),
-              Text('在线: ${peer.online ? "是" : "否"}'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
-      },
+    showUuDialog<void>(
+      context,
+      title: uuPeerName(peer),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('ID: ${peer.id}',
+              style: TextStyle(
+                  color: UuColors.textSecondary, fontSize: 13)),
+          const SizedBox(height: 6),
+          Text(translate('Platform: {${peer.platform}}'),
+              style: TextStyle(
+                  color: UuColors.textSecondary, fontSize: 13)),
+          const SizedBox(height: 6),
+          Text(translate('Status: {${translate(peer.online ? 'Online' : 'Offline')}}'),
+              style: TextStyle(
+                  color: UuColors.textSecondary, fontSize: 13)),
+        ],
+      ),
+      actions: [
+        uuDialogTextButton(translate('Rename'), () async {
+          Navigator.of(context).pop();
+          final renamed = await showUuRenameDevice(
+            context,
+            id: peer.id,
+            currentAlias: peer.alias,
+          );
+          if (renamed != null && mounted) {
+            setState(() {});
+          }
+        }),
+        uuDialogFilledButton(
+            translate('Close'), () => Navigator.of(context).pop()),
+      ],
     );
+  }
+
+  Future<void> _renamePeer(Peer peer) async {
+    final renamed = await showUuRenameDevice(
+      context,
+      id: peer.id,
+      currentAlias: peer.alias,
+    );
+    if (renamed != null && mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _deletePeer(Peer peer) async {
+    final id = peer.id;
+    final name = uuPeerName(peer);
+    final inAddressBook =
+        gFFI.abModel.currentAbPeers.any((item) => item.id == id);
+    final ok = await showUuConfirm(
+      context,
+      title: translate('Delete device'),
+      message: inAddressBook
+          ? translate(
+              'This will remove {$name} from your account devices; you will need to add it again.')
+          : translate('This will remove {$name} from recent connections.'),
+      confirmText: translate('Delete'),
+      danger: true,
+    );
+    if (!ok || !mounted) {
+      return;
+    }
+    var deleted = false;
+    if (inAddressBook) {
+      deleted = await gFFI.abModel.deletePeers([id]);
+    } else {
+      await bind.mainRemovePeer(id: id);
+      bind.mainLoadRecentPeers();
+      deleted = true;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (deleted) {
+      setState(() {
+        if (_selectedId == id) {
+          _selectedId = null;
+          _page = _HomePage.home;
+        }
+      });
+      uuToast(translate('Deleted'));
+    } else {
+      uuToast(translate('Delete failed. Please try again later.'));
+    }
   }
 
   Widget _buildAssist(BuildContext context) {
@@ -1078,8 +1675,8 @@ class _UuHomePageState extends State<UuHomePage> {
             children: [
               Row(
                 children: [
-                  const Text(
-                    '本设备',
+                  Text(
+                    translate('This device'),
                     style: TextStyle(
                       color: UuTheme.textPrimary,
                       fontSize: 20,
@@ -1087,8 +1684,8 @@ class _UuHomePageState extends State<UuHomePage> {
                     ),
                   ),
                   const Spacer(),
-                  const Text(
-                    '允许他人远程协助',
+                  Text(
+                    translate('Allow remote assistance'),
                     style: TextStyle(
                       color: UuTheme.textSecondary,
                       fontSize: 13,
@@ -1102,7 +1699,7 @@ class _UuHomePageState extends State<UuHomePage> {
                   ),
                 ],
               ),
-              const Divider(height: 30, color: Color(0xFFE5E7EB)),
+              Divider(height: 30, color: UuColors.border),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1110,8 +1707,8 @@ class _UuHomePageState extends State<UuHomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          '本设备 ID',
+                        Text(
+                          translate('This device ID'),
                           style: TextStyle(
                             color: UuTheme.textSecondary,
                             fontSize: 12,
@@ -1123,7 +1720,7 @@ class _UuHomePageState extends State<UuHomePage> {
                           builder: (context, value, child) {
                             return SelectableText(
                               value.text,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: UuTheme.textPrimary,
                                 fontSize: 26,
                                 fontWeight: FontWeight.w700,
@@ -1139,29 +1736,20 @@ class _UuHomePageState extends State<UuHomePage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            const Text(
-                              '验证方式：',
-                              style: TextStyle(
-                                color: UuTheme.textSecondary,
-                                fontSize: 12,
+                        UuMenuButton<String>(
+                          width: 220,
+                          entriesBuilder: (context) => [
+                            for (final option in _verificationOptions)
+                              UuMenuItem(
+                                value: option.$1,
+                                label: option.$2,
+                                selected:
+                                    gFFI.serverModel.verificationMethod ==
+                                        option.$1,
                               ),
-                            ),
-                            const Text(
-                              '同时使用两种验证码',
-                              style: TextStyle(
-                                color: UuTheme.textPrimary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const Icon(
-                              Icons.unfold_more,
-                              size: 16,
-                              color: UuTheme.textSecondary,
-                            ),
                           ],
+                          onSelected: _setVerificationMethod,
+                          child: _AssistMethodTrigger(label: _verificationLabel),
                         ),
                         const SizedBox(height: 6),
                         Row(
@@ -1174,7 +1762,7 @@ class _UuHomePageState extends State<UuHomePage> {
                                   _showAssistPassword
                                       ? value.text
                                       : '••••••••',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     color: UuTheme.textPrimary,
                                     fontSize: 22,
                                     fontWeight: FontWeight.w700,
@@ -1184,39 +1772,33 @@ class _UuHomePageState extends State<UuHomePage> {
                               },
                             ),
                             const SizedBox(width: 8),
-                            _assistIcon(
-                              Icons.visibility_outlined,
-                              () => setState(() => _showAssistPassword =
+                            UuHoverIconButton(
+                              icon: Icons.visibility_outlined,
+                              iconSize: 20,
+                              size: 34,
+                              onTap: () => setState(() => _showAssistPassword =
                                   !_showAssistPassword),
                             ),
-                            GestureDetector(
+                            UuHoverIconButton(
                               key: _assistGearKey,
+                              icon: Icons.settings_outlined,
+                              iconSize: 20,
+                              size: 34,
                               onTap: _showAssistGearMenu,
-                              child: const Padding(
-                                padding: EdgeInsets.all(8),
-                                child: Icon(
-                                  Icons.settings_outlined,
-                                  size: 20,
-                                  color: UuTheme.textSecondary,
-                                ),
-                              ),
                             ),
                             const SizedBox(width: 6),
-                            FilledButton(
-                              onPressed: _copyAssist,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFFF2F3F5),
-                                foregroundColor: UuTheme.textPrimary,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 14, vertical: 10),
-                              ),
-                              child: const Text('复制并分享'),
+                            UuSoftButton(
+                              label: translate('Copy and share'),
+                              onTap: _copyAssist,
+                              height: 36,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14),
                             ),
                           ],
                         ),
                         const SizedBox(height: 6),
-                        const Text(
-                          '每次远控结束刷新',
+                        Text(
+                          _assistRefreshLabel,
                           style: TextStyle(
                             color: UuTheme.textSecondary,
                             fontSize: 12,
@@ -1235,8 +1817,8 @@ class _UuHomePageState extends State<UuHomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '远控伙伴设备',
+              Text(
+                translate('Remote partner device'),
                 style: TextStyle(
                   color: UuTheme.textPrimary,
                   fontSize: 20,
@@ -1244,46 +1826,47 @@ class _UuHomePageState extends State<UuHomePage> {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                '通过其他设备的【设备 ID】及【设备验证码】启动远程控制',
+              Text(
+                translate("Start remote control with another device's ID and verification code"),
                 style: TextStyle(
                   color: UuTheme.textSecondary,
                   fontSize: 13,
                 ),
               ),
-              const Divider(height: 30, color: Color(0xFFE5E7EB)),
+              Divider(height: 30, color: UuColors.border),
               Row(
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _assistIdController,
                       decoration: InputDecoration(
-                        hintText: '请输入设备 ID',
+                        hintText: translate('Please enter a device ID'),
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: UuColors.background,
                         isDense: true,
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 14, vertical: 12),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(
-                              color: Color(0xFFE5E7EB)),
+                          borderSide: BorderSide(color: UuColors.border),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
-                          borderSide: const BorderSide(
-                              color: Color(0xFFE5E7EB)),
+                          borderSide: BorderSide(color: UuColors.border),
                         ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 18),
                   SizedBox(
-                    width: 100,
-                    height: 44,
-                    child: FilledButton(
-                      onPressed: _connectAssist,
-                      child: const Text('连接'),
+                    width: 104,
+                    child: UuPrimaryButton(
+                      label: translate('Connect'),
+                      onTap: _connectAssist,
+                      height: 44,
+                      radius: UuRadius.pill,
+                      fontSize: 15,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
                     ),
                   ),
                 ],
@@ -1300,20 +1883,72 @@ class _UuHomePageState extends State<UuHomePage> {
       width: double.infinity,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F7F7),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        color: UuColors.surface,
+        borderRadius: BorderRadius.circular(UuRadius.lg),
+        border: Border.all(color: UuColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(UuColors.isDark ? 0.28 : 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: child,
     );
   }
 
-  Widget _assistIcon(IconData icon, VoidCallback onTap) {
-    return IconButton(
-      onPressed: onTap,
-      icon: Icon(icon, size: 20, color: UuTheme.textSecondary),
-      visualDensity: VisualDensity.compact,
-    );
+  List<(String, String)> get _verificationOptions => [
+        (kUseTemporaryPassword, translate('Use one-time password')),
+        (kUsePermanentPassword, translate('Use permanent password')),
+        (kUseBothPasswords, translate('Use both passwords')),
+      ];
+
+  String get _verificationLabel {
+    final current = gFFI.serverModel.verificationMethod;
+    for (final option in _verificationOptions) {
+      if (option.$1 == current) {
+        return option.$2;
+      }
+    }
+    return translate('Use both passwords');
+  }
+
+  String get _assistRefreshLabel {
+    switch (_autoRefresh) {
+      case '1h':
+        return translate('Every hour');
+      case '12h':
+        return translate('Every 12 hours');
+      case '24h':
+        return translate('Every 24 hours');
+      case 'off':
+        return translate('Never');
+      default:
+        return translate('After each session');
+    }
+  }
+
+  Future<void> _setVerificationMethod(String value) async {
+    final model = gFFI.serverModel;
+    Future<void> apply() async {
+      await model.setVerificationMethod(value);
+      await model.updatePasswordModel();
+      if (mounted) {
+        setState(() {});
+      }
+    }
+
+    if (value == kUsePermanentPassword &&
+        await bind.mainGetCommon(key: 'permanent-password-set') != 'true') {
+      if (isChangePermanentPasswordDisabled()) {
+        await apply();
+        return;
+      }
+      setPasswordDialog(notEmptyCallback: apply);
+    } else {
+      await apply();
+    }
   }
 
   Future<void> _showSettingsDialog() async {
@@ -1325,20 +1960,13 @@ class _UuHomePageState extends State<UuHomePage> {
     if (!mounted) {
       return;
     }
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(bind.mainGetAppNameSync()),
-          content: Text('版本 $version'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
-      },
+    await showUuDialog<void>(
+      context,
+      title: bind.mainGetAppNameSync(),
+      message: translate('Version {$version}'),
+      actions: [
+        uuDialogFilledButton(translate('Close'), () => Navigator.of(context).pop()),
+      ],
     );
   }
 
@@ -1347,30 +1975,27 @@ class _UuHomePageState extends State<UuHomePage> {
         _assistGearKey.currentContext?.findRenderObject() as RenderBox?;
     final offset =
         box?.localToGlobal(Offset.zero) ?? const Offset(200, 200);
-    final value = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(offset.dx, offset.dy + 36, 0, 0),
-      items: const [
-        PopupMenuItem(
+    final anchor = box == null
+        ? const Rect.fromLTWH(200, 200, 0, 0)
+        : Rect.fromLTWH(offset.dx, offset.dy, box.size.width, box.size.height);
+    final value = await showUuMenu<String>(
+      context,
+      anchorRect: anchor,
+      width: 220,
+      entries: [
+        UuMenuItem(
           value: 'now',
-          child: Row(
-            children: [
-              Icon(Icons.refresh, size: 18),
-              SizedBox(width: 10),
-              Text('立即刷新'),
-            ],
-          ),
+          label: translate('Refresh now'),
+          icon: Icons.refresh,
         ),
-        PopupMenuItem(
+        UuMenuItem(
           value: 'auto',
-          child: Row(
-            children: [
-              Icon(Icons.autorenew, size: 18),
-              SizedBox(width: 10),
-              Text('自动刷新'),
-              Spacer(),
-              Icon(Icons.chevron_right, size: 18),
-            ],
+          label: translate('Auto refresh'),
+          icon: Icons.autorenew,
+          trailing: Icon(
+            Icons.chevron_right,
+            size: 16,
+            color: UuColors.textTertiary,
           ),
         ),
       ],
@@ -1381,35 +2006,22 @@ class _UuHomePageState extends State<UuHomePage> {
     if (value == 'now') {
       unawaited(bind.mainUpdateTemporaryPassword());
     } else if (value == 'auto') {
-      final interval = await showMenu<String>(
-        context: context,
-        position: RelativeRect.fromLTRB(
-          offset.dx + 150,
-          offset.dy + 74,
-          0,
-          0,
-        ),
-        items: [
-          for (final option in const [
-            '每次远控结束',
-            '每小时',
-            '每 12 小时',
-            '每 24 小时',
-            '关闭',
+      final interval = await showUuMenu<String>(
+        context,
+        anchorRect: Rect.fromLTWH(offset.dx + 150, offset.dy + 74, 0, 0),
+        width: 200,
+        entries: [
+          for (final option in [
+            ('after-session', translate('After each session')),
+            ('1h', translate('Every hour')),
+            ('12h', translate('Every 12 hours')),
+            ('24h', translate('Every 24 hours')),
+            ('off', translate('Never')),
           ])
-            PopupMenuItem(
-              value: option,
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 24,
-                    child: _autoRefresh == option
-                        ? const Icon(Icons.check, size: 18)
-                        : null,
-                  ),
-                  Text(option),
-                ],
-              ),
+            UuMenuItem(
+              value: option.$1,
+              label: option.$2,
+              selected: _autoRefresh == option.$1,
             ),
         ],
       );
@@ -1425,13 +2037,13 @@ class _UuHomePageState extends State<UuHomePage> {
     _assistRefreshTimer = null;
     Duration? duration;
     switch (interval) {
-      case '每小时':
+      case '1h':
         duration = const Duration(hours: 1);
         break;
-      case '每 12 小时':
+      case '12h':
         duration = const Duration(hours: 12);
         break;
-      case '每 24 小时':
+      case '24h':
         duration = const Duration(hours: 24);
         break;
     }
@@ -1447,13 +2059,13 @@ class _UuHomePageState extends State<UuHomePage> {
     final id = gFFI.serverModel.serverId.text;
     final password = gFFI.serverModel.serverPasswd.text;
     Clipboard.setData(ClipboardData(text: '$id $password'));
-    showToast('已复制');
+    uuToast(translate('Copied'));
   }
 
   Future<void> _connectAssist() async {
     final id = _assistIdController.text.replaceAll(' ', '').trim();
     if (id.isEmpty) {
-      showToast('请输入设备 ID');
+      uuToast(translate('Please enter a device ID'));
       return;
     }
     await connect(context, id);
@@ -1476,12 +2088,12 @@ class _UuHomePageState extends State<UuHomePage> {
             onPressed: () =>
                 setState(() => _page = _HomePage.allDevices),
             style: TextButton.styleFrom(
-              backgroundColor: const Color(0xFFF1F2F4),
+              backgroundColor: UuColors.hover,
               foregroundColor: UuTheme.textSecondary,
               padding: const EdgeInsets.symmetric(
                   horizontal: 16, vertical: 10),
             ),
-            child: const Text('添加收藏设备'),
+            child: Text(translate('Add favorite device')),
           ),
         ),
         const SizedBox(height: 10),
@@ -1496,18 +2108,18 @@ class _UuHomePageState extends State<UuHomePage> {
                     width: 96,
                     height: 96,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE8F4FF),
+                      color: UuColors.primarySoft,
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: const Icon(
                       Icons.inventory_2_outlined,
                       size: 48,
-                      color: Color(0xFF69B7FF),
+                      color: UuColors.primary,
                     ),
                   ),
                   const SizedBox(height: 18),
-                  const Text(
-                    '暂无收藏',
+                  Text(
+                    translate('No favorites'),
                     style: TextStyle(
                       color: UuTheme.textSecondary,
                       fontSize: 16,
@@ -1518,7 +2130,24 @@ class _UuHomePageState extends State<UuHomePage> {
             ),
           )
         else
-          for (final peer in favorites) _allDeviceRow(peer),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final peer in favorites)
+                _deviceCard(
+                  name: uuPeerName(peer),
+                  id: peer.id,
+                  online: peer.online,
+                  icon: UuPeerPlatformIcon.iconFor(peer.platform),
+                  onTap: () => setState(() {
+                    _page = _HomePage.home;
+                    _selectedId = peer.id;
+                  }),
+                  onInfo: () => _showPeerInfo(peer),
+                ),
+            ],
+          ),
       ],
     );
   }
@@ -1530,11 +2159,18 @@ class _UuHomePageState extends State<UuHomePage> {
   }) {
     final online = selected?.online ??
         gFFI.serverModel.serverId.text.isNotEmpty;
-    return Container(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onPanStart: (_) => windowManager.startDragging(),
+      onDoubleTap: isMacOS || kUseCompatibleUiMode
+          ? null
+          : () => toggleMaximize(true)
+              .then((value) => stateGlobal.setMaximized(value)),
+      child: Container(
       height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      padding: EdgeInsets.only(left: 24, right: isMacOS ? 24 : 8),
+      decoration: BoxDecoration(
+        color: UuColors.surface,
         border: Border(bottom: BorderSide(color: UuTheme.divider)),
       ),
       child: Row(
@@ -1560,8 +2196,8 @@ class _UuHomePageState extends State<UuHomePage> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    online ? '在线' : '离线',
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                    online ? translate('Online') : translate('Offline'),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ],
               ),
@@ -1575,11 +2211,11 @@ class _UuHomePageState extends State<UuHomePage> {
                   child: Text(
                     pageTitle ??
                         (selected == null
-                            ? '我的设备'
+                            ? translate('My devices')
                             : uuPeerName(selected)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: UuTheme.textPrimary,
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -1587,36 +2223,52 @@ class _UuHomePageState extends State<UuHomePage> {
                   ),
                 ),
                 if (pageTitle == null)
-                  PopupMenuButton<String>(
-                    icon: const Icon(
-                      Icons.more_vert,
-                      size: 18,
-                      color: UuTheme.textSecondary,
-                    ),
+                  UuMenuButton<String>(
+                    width: 180,
+                    icon: Icons.more_vert,
                     onSelected: (value) {
-                      if (value == 'copy') {
-                        final text =
-                            selected?.id ?? gFFI.serverModel.serverId.text;
-                        Clipboard.setData(ClipboardData(text: text));
-                        showToast('已复制');
-                      } else if (value == 'refresh') {
-                        bind.mainLoadRecentPeers();
+                      if (selected == null) {
+                        return;
+                      }
+                      switch (value) {
+                        case 'refresh':
+                          bind.mainLoadRecentPeers();
+                          if (gFFI.abModel.currentAbPeers
+                              .any((peer) => peer.id == selected.id)) {
+                            unawaited(gFFI.abModel.pullAb(
+                                force: ForcePullAb.current, quiet: true));
+                          }
+                          break;
+                        case 'rename':
+                          unawaited(_renamePeer(selected));
+                          break;
+                        case 'delete':
+                          unawaited(_deletePeer(selected));
+                          break;
                       }
                     },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'copy', child: Text('复制 ID')),
-                      PopupMenuItem(value: 'refresh', child: Text('刷新设备')),
+                    entriesBuilder: (context) => [
+                      UuMenuItem(
+                        value: 'refresh',
+                        label: translate('Refresh devices'),
+                        icon: Icons.refresh,
+                      ),
+                      UuMenuItem(
+                        value: 'rename',
+                        label: translate('Rename'),
+                        icon: Icons.drive_file_rename_outline,
+                      ),
+                      UuMenuItem(
+                        value: 'delete',
+                        label: translate('Delete device'),
+                        icon: Icons.delete_outline,
+                        danger: true,
+                      ),
                     ],
                   ),
               ],
             ),
           ),
-          _HoverCircle(
-            icon: Icons.monitor_outlined,
-            onTap: () => showUuSettingsDialog(
-                context, initialTab: SettingsTabKey.display),
-          ),
-          const SizedBox(width: 8),
           Stack(
             clipBehavior: Clip.none,
             children: [
@@ -1624,7 +2276,7 @@ class _UuHomePageState extends State<UuHomePage> {
                 icon: Icons.notifications_none,
                 onTap: _showNotifications,
               ),
-              if (_needsPermissions)
+              if (_needsPermissions || _daemonProblem)
                 Positioned(
                   right: 2,
                   top: 2,
@@ -1632,7 +2284,7 @@ class _UuHomePageState extends State<UuHomePage> {
                     width: 8,
                     height: 8,
                     decoration: const BoxDecoration(
-                      color: Color(0xFFF59E0B),
+                      color: UuColors.warning,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -1643,17 +2295,18 @@ class _UuHomePageState extends State<UuHomePage> {
           Obx(() {
             final loggedIn = gFFI.userModel.isLogin;
             final label =
-                loggedIn ? gFFI.userModel.displayNameOrUserName : '登录 / 注册';
+                loggedIn ? gFFI.userModel.displayNameOrUserName : translate('Login / Register');
             return Material(
               color: Colors.transparent,
               child: InkWell(
+                hoverColor: UuColors.hoverTint,
                 borderRadius: BorderRadius.circular(999),
                 onTap: () => uuAccountDialog(context),
                 child: Container(
                   height: 36,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: loggedIn ? UuTheme.accentSoft : Colors.white,
+                    color: loggedIn ? UuTheme.accentSoft : UuColors.surface,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(color: UuTheme.divider),
                   ),
@@ -1672,7 +2325,7 @@ class _UuHomePageState extends State<UuHomePage> {
                           label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: UuTheme.textPrimary,
                             fontSize: 12,
                             fontWeight: FontWeight.w500,
@@ -1686,10 +2339,10 @@ class _UuHomePageState extends State<UuHomePage> {
             );
           }),
           const SizedBox(width: 4),
-          PopupMenuButton<String>(
-            tooltip: '更多',
-            padding: EdgeInsets.zero,
-            child: const _CircleSurface(icon: Icons.menu),
+          UuMenuButton<String>(
+            tooltip: translate('Settings'),
+            width: 224,
+            child: const _CircleSurface(icon: Icons.settings_outlined),
             onSelected: (value) {
               switch (value) {
                 case 'settings':
@@ -1702,7 +2355,7 @@ class _UuHomePageState extends State<UuHomePage> {
                   _showAboutDialog();
                   break;
                 case 'logout':
-                  unawaited(gFFI.userModel.logOut());
+                  unawaited(_logout());
                   break;
                 case 'check-update':
                   checkUpdate();
@@ -1721,56 +2374,58 @@ class _UuHomePageState extends State<UuHomePage> {
                   break;
               }
             },
-            itemBuilder: (context) => [
-              _menuItem('settings', Icons.settings_outlined, '设置'),
-              _menuItem('help', Icons.help_outline, '帮助与反馈'),
-              _menuItem('about', Icons.info_outline, '关于'),
+            entriesBuilder: (context) => [
+              _menuItem('settings', Icons.settings_outlined, translate('Settings')),
+              _menuItem('help', Icons.help_outline, translate('Help and feedback')),
+              _menuItem('about', Icons.info_outline, translate('About')),
               if (gFFI.userModel.isLogin)
-                _menuItem('logout', Icons.logout, '退出登录'),
+                _menuItem('logout', Icons.logout, translate('Sign out')),
               _menuItem(
                 'check-update',
                 Icons.system_update_alt,
-                '检查更新',
+                translate('Check for updates'),
               ),
-              const PopupMenuDivider(),
+              const UuMenuDivider<String>(),
               _menuItem(
                 'demo',
                 _demoVisible
                     ? Icons.visibility_off_outlined
                     : Icons.visibility_outlined,
-                _demoVisible ? '隐藏演示设备' : '显示演示设备',
+                _demoVisible ? translate('Hide demo devices') : translate('Show demo devices'),
               ),
-              _menuItem('local', Icons.computer_outlined, '本机信息'),
-              _menuItem('hero', Icons.image_outlined, '更换背景图'),
+              _menuItem('local', Icons.computer_outlined, translate('Local device info')),
+              _menuItem('hero', Icons.image_outlined, translate('Change background image')),
               if (_heroImage.isNotEmpty)
                 _menuItem(
                   'hero-reset',
                   Icons.hide_image_outlined,
-                  '恢复默认背景',
+                  translate('Reset background'),
                 ),
             ],
           ),
+          if (!isMacOS && !kUseCompatibleUiMode) ...[
+            const SizedBox(width: 10),
+            UuWindowControls(
+              isMainWindow: true,
+              iconColor: UuTheme.textSecondary,
+            ),
+          ],
         ],
+      ),
       ),
     );
   }
 
-  PopupMenuItem<String> _menuItem(
+  UuMenuItem<String> _menuItem(
     String value,
     IconData icon,
     String label,
   ) {
-    return PopupMenuItem<String>(
+    return UuMenuItem<String>(
       value: value,
+      label: label,
+      icon: icon,
       height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: UuTheme.textSecondary),
-          const SizedBox(width: 10),
-          Text(label, style: const TextStyle(fontSize: 13)),
-        ],
-      ),
     );
   }
 
@@ -1787,7 +2442,7 @@ class _UuHomePageState extends State<UuHomePage> {
               right: -24,
               bottom: -34,
               child: Icon(
-                Icons.desktop_windows,
+                UuPeerPlatformIcon.iconFor(peer.platform),
                 size: 310,
                 color: Colors.white.withOpacity(0.10),
               ),
@@ -1807,7 +2462,62 @@ class _UuHomePageState extends State<UuHomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Spacer(),
-                  _enterDesktopButton(() => _connectPeer(peer)),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              uuPeerName(peer),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700,
+                                shadows: [
+                                  Shadow(blurRadius: 8, color: Colors.black45)
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    color: peer.online
+                                        ? UuColors.success
+                                        : Colors.white54,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    peer.platform.isEmpty
+                                        ? (peer.online ? translate('Online') : translate('Offline'))
+                                        : '${translate(peer.online ? 'Online' : 'Offline')} · ${peer.platform}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      _enterDesktopButton(() => _connectPeer(peer)),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1818,66 +2528,143 @@ class _UuHomePageState extends State<UuHomePage> {
   }
 
   Widget _buildEmptyHero(BuildContext context) {
-    return Container(
-      height: 240,
-      width: double.infinity,
-      decoration: _heroDecoration(),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -24,
-              bottom: -34,
-              child: Icon(
-                Icons.devices_other,
-                size: 320,
-                color: Colors.white.withOpacity(0.10),
-              ),
+    final loggedIn = gFFI.userModel.isLogin;
+    return UuCard(
+      bordered: true,
+      padding: const EdgeInsets.fromLTRB(28, 26, 24, 24),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: UuColors.primarySoft,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.devices_rounded,
+                      size: 26, color: UuColors.primary),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  translate('Start remote control'),
+                  style: TextStyle(
+                    color: UuColors.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  loggedIn
+                      ? translate('Pick a device on the left, or enter its ID to start connecting.')
+                      : translate("Sign in to sync devices automatically, or enter the other device's ID to connect."),
+                  style: TextStyle(
+                    color: UuColors.textSecondary,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    if (!loggedIn)
+                      UuPillButton(
+                        label: translate('Sign in to sync devices'),
+                        icon: Icons.person_outline,
+                        filled: false,
+                        onPressed: () => uuAccountDialog(context),
+                      ),
+                    UuPillButton(
+                      label: translate('Connect with ID'),
+                      icon: Icons.dialpad_rounded,
+                      filled: loggedIn,
+                      onPressed: () => _showQuickConnect(),
+                    ),
+                    UuPillButton(
+                      label: translate('Local device info'),
+                      icon: Icons.computer_outlined,
+                      filled: false,
+                      onPressed: _showLocalInfo,
+                    ),
+                  ],
+                ),
+              ],
             ),
-            const Positioned.fill(
-              child: ColoredBox(color: Colors.black26),
+          ),
+          const SizedBox(width: 20),
+          SizedBox(
+            width: 150,
+            height: 150,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 118,
+                  height: 118,
+                  decoration: BoxDecoration(
+                    color: UuColors.primarySoft,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const Icon(Icons.desktop_windows,
+                    size: 52, color: UuColors.primary),
+                Positioned(
+                  right: 8,
+                  bottom: 18,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: UuColors.surface,
+                      shape: BoxShape.circle,
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x1A161A22),
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.phone_iphone,
+                        size: 22, color: UuColors.success),
+                  ),
+                ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.all(26),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Spacer(),
-                  _enterDesktopButton(() => _showQuickConnect()),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _enterDesktopButton(VoidCallback onTap) {
-    return Center(
-      child: TextButton(
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+    return TextButton(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
+        backgroundColor: UuColors.surface,
+        foregroundColor: UuColors.textPrimary,
+        overlayColor: UuColors.primarySoft,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(UuRadius.pill),
         ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '进入桌面',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                shadows: [Shadow(blurRadius: 8, color: Colors.black45)],
-              ),
-            ),
-            SizedBox(width: 8),
-            Icon(Icons.arrow_forward, color: Colors.white, size: 20),
-          ],
-        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            translate('Enter desktop'),
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          SizedBox(width: 6),
+          Icon(Icons.arrow_forward_rounded, size: 18),
+        ],
       ),
     );
   }
@@ -1909,7 +2696,7 @@ class _UuHomePageState extends State<UuHomePage> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: UuColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: UuTheme.divider),
       ),
@@ -1918,49 +2705,48 @@ class _UuHomePageState extends State<UuHomePage> {
         children: [
           _action(
             Icons.swap_horiz,
-            '文件传输',
+            translate('File transfer'),
             () => run(isFileTransfer: true),
           ),
           _actionDivider(),
           _action(
             Icons.play_circle_outline,
-            '观看模式',
+            translate('View only'),
             () => run(),
           ),
           _actionDivider(),
           _action(
             Icons.terminal,
-            '终端',
+            translate('Terminal'),
             () => run(isTerminal: true),
-          ),
-          _actionDivider(),
-          _action(
-            Icons.settings_ethernet,
-            '端口映射',
-            () => run(isTcpTunneling: true),
           ),
           _actionDivider(),
           Expanded(
             child: Center(
-              child: PopupMenuButton<String>(
-                tooltip: '更多',
-                icon: const Icon(
-                  Icons.grid_view,
-                  size: 18,
-                  color: UuTheme.textSecondary,
-                ),
+              child: UuMenuButton<String>(
+                tooltip: translate('More'),
+                width: 184,
+                icon: Icons.grid_view,
                 onSelected: (value) {
                   if (value == 'camera') {
                     run(isViewCamera: true);
                   } else if (value == 'copy' && peer != null) {
                     Clipboard.setData(ClipboardData(text: peer.id));
-                    showToast('已复制');
+                    uuToast(translate('Copied'));
                   }
                 },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'camera', child: Text('摄像头')),
+                entriesBuilder: (context) => [
+                  UuMenuItem(
+                    value: 'camera',
+                    label: translate('Camera'),
+                    icon: Icons.photo_camera_outlined,
+                  ),
                   if (peer != null)
-                    const PopupMenuItem(value: 'copy', child: Text('复制 ID')),
+                    UuMenuItem(
+                      value: 'copy',
+                      label: translate('Copy ID'),
+                      icon: Icons.copy_outlined,
+                    ),
                 ],
               ),
             ),
@@ -1985,7 +2771,7 @@ class _UuHomePageState extends State<UuHomePage> {
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
           child: Container(
-            color: isHovered ? const Color(0xFFF6F6F6) : Colors.transparent,
+            color: isHovered ? UuColors.hoverTint : Colors.transparent,
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1997,7 +2783,7 @@ class _UuHomePageState extends State<UuHomePage> {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: UuTheme.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
@@ -2014,10 +2800,6 @@ class _UuHomePageState extends State<UuHomePage> {
 
   Widget _actionDivider() {
     return Container(width: 1, height: 22, color: UuTheme.divider);
-  }
-
-  Widget _buildAddCard(BuildContext context) {
-    return _AddCard(onTap: () => _showQuickConnect());
   }
 
   Widget _buildPermissionBanner(BuildContext context) {
@@ -2039,16 +2821,16 @@ class _UuHomePageState extends State<UuHomePage> {
       margin: const EdgeInsets.fromLTRB(38, 12, 38, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF8EC),
+        color: UuColors.warningSoft,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFFE2B8)),
+        border: Border.all(color: UuColors.warningBorder),
       ),
       child: Row(
         children: [
           const Icon(
             Icons.warning_amber_rounded,
             size: 16,
-            color: Color(0xFFF59E0B),
+            color: UuColors.warning,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -2056,9 +2838,9 @@ class _UuHomePageState extends State<UuHomePage> {
               text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 color: UuTheme.textSecondary,
-                fontSize: 11,
+                fontSize: 12,
               ),
             ),
           ),
@@ -2069,41 +2851,6 @@ class _UuHomePageState extends State<UuHomePage> {
         ],
       ),
     );
-  }
-}
-
-class _DashedBorderPainter extends CustomPainter {
-  _DashedBorderPainter({required this.color, this.radius = 12});
-
-  final Color color;
-  final double radius;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    final rrect = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      Radius.circular(radius),
-    );
-    final path = Path()..addRRect(rrect);
-    const dash = 6.0;
-    const gap = 5.0;
-    for (final metric in path.computeMetrics()) {
-      var distance = 0.0;
-      while (distance < metric.length) {
-        final next = (distance + dash).clamp(0.0, metric.length);
-        canvas.drawPath(metric.extractPath(distance, next), paint);
-        distance = next + gap;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.radius != radius;
   }
 }
 
@@ -2149,11 +2896,70 @@ class _CircleSurfaceState extends State<_CircleSurface> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: _circleDecoration(_hovered, widget.icon),
+    );
+  }
+}
+
+class _AssistMethodTrigger extends StatefulWidget {
+  const _AssistMethodTrigger({required this.label});
+
+  final String label;
+
+  @override
+  State<_AssistMethodTrigger> createState() => _AssistMethodTriggerState();
+}
+
+class _AssistMethodTriggerState extends State<_AssistMethodTrigger> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: _hovered
+              ? UuColors.primarySoft
+              : UuColors.primarySoft.withOpacity(0),
+          borderRadius: BorderRadius.circular(UuRadius.sm),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              translate('Verification method:'),
+              style: TextStyle(
+                color: UuColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              widget.label,
+              style: TextStyle(
+                color: UuColors.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.unfold_more,
+              size: 16,
+              color: _hovered ? UuColors.primary : UuColors.textSecondary,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2164,86 +2970,11 @@ Widget _circleDecoration(bool hovered, IconData icon) {
     height: 36,
     decoration: BoxDecoration(
       shape: BoxShape.circle,
-      color: hovered ? const Color(0xFFECECEC) : Colors.white,
-      border: Border.all(color: const Color(0xFFE5E7EB)),
+      color: hovered ? UuColors.hoverTint : UuColors.surface,
+      border: Border.all(color: UuColors.border),
     ),
-    child: Icon(icon, size: 18, color: UuTheme.textSecondary),
+    child: Icon(icon,
+        size: 18, color: hovered ? UuTheme.accent : UuTheme.textSecondary),
   );
 }
 
-class _AddCard extends StatefulWidget {
-  const _AddCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  State<_AddCard> createState() => _AddCardState();
-}
-
-class _AddCardState extends State<_AddCard> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: TweenAnimationBuilder<Color?>(
-          tween: ColorTween(
-            begin: const Color(0xFFD9DEE7),
-            end: _hovered
-                ? const Color(0xFFC8CDD6)
-                : const Color(0xFFD9DEE7),
-          ),
-          duration: const Duration(milliseconds: 200),
-          builder: (context, color, child) {
-            return CustomPaint(
-              foregroundPainter: _DashedBorderPainter(
-                color: color ?? const Color(0xFFD9DEE7),
-                radius: 12,
-              ),
-              child: Container(
-                height: 160,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 50,
-                      height: 50,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFF0F0F0),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.add,
-                        color: UuTheme.textSecondary,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      translate('Add'),
-                      style: const TextStyle(
-                        color: UuTheme.textSecondary,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}

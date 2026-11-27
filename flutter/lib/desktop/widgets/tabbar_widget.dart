@@ -252,6 +252,9 @@ class DesktopTab extends StatefulWidget {
   final Color? selectedTabBackgroundColor;
   final Color? unSelectedTabBackgroundColor;
   final Color? selectedBorderColor;
+  // Replaces the stock tab row entirely when provided.
+  final Widget Function()? barBuilder;
+  final double? barHeight;
 
   final DesktopTabController controller;
 
@@ -277,6 +280,8 @@ class DesktopTab extends StatefulWidget {
     this.selectedTabBackgroundColor,
     this.unSelectedTabBackgroundColor,
     this.selectedBorderColor,
+    this.barBuilder,
+    this.barHeight,
   }) : super(key: key);
 
   static RxString tablabelGetter(String peerId) {
@@ -530,6 +535,12 @@ class _DesktopTabState extends State<DesktopTab>
             !(bind.mainGetLocalOption(key: 'custom-ui') != 'N' &&
                 state.value.selectedTabInfo.key == kTabLabelHomePage)) {
           final showBottomDivider = _showTabBarBottomDivider(tabType);
+          if (widget.barBuilder != null) {
+            return SizedBox(
+              height: widget.barHeight ?? _kTabBarHeight,
+              child: widget.barBuilder!(),
+            );
+          }
           return SizedBox(
             height: _kTabBarHeight,
             child: Column(

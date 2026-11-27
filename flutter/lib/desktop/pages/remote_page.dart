@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 
 import '../../consts.dart';
@@ -19,6 +20,8 @@ import '../../models/input_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/shortcut_model.dart';
 import '../../common/shared_state.dart';
+import '../../custom_ui/desktop/uu_fullscreen_bar.dart';
+import '../../custom_ui/uu_defaults.dart';
 import '../../custom_ui/uu_wallpaper.dart';
 import '../../utils/image.dart';
 import '../widgets/remote_toolbar.dart';
@@ -126,6 +129,8 @@ class _RemotePageState extends State<RemotePage>
   Timer? _pointerLockCenterDebounceTimer;
 
   Timer? _uuWallpaperTimer;
+  late final bool _uuCustomUi =
+      bind.mainGetLocalOption(key: 'custom-ui') != 'N';
 
   // We need `_instanceIdOnEnterOrLeaveImage4Toolbar` together with `_onEnterOrLeaveImage4Toolbar`
   // to identify the toolbar instance and its callback function.
@@ -183,6 +188,7 @@ class _RemotePageState extends State<RemotePage>
           _uuWallpaperTimer?.cancel();
           _uuWallpaperTimer =
               Timer(const Duration(seconds: 2), _saveUuWallpaper);
+          unawaited(applyUuViewStyle(_ffi));
         }
       }
     });
@@ -800,16 +806,29 @@ class _RemotePageState extends State<RemotePage>
               // Use Overlay to enable rebuild every time on menu button click.
               // Hide toolbar when relative mouse mode is active to prevent
               // cursor from escaping to toolbar area.
-              Obx(() => _ffi.inputModel.relativeMouseMode.value
-                  ? const Offstage()
-                  : _ffi.ffiModel.pi.isSet.isTrue
-                      ? Overlay(initialEntries: [
-                          OverlayEntry(builder: remoteToolbar)
-                        ])
-                      : remoteToolbar(context)),
+              ValueListenableBuilder<bool>(
+                valueListenable: uuRemoteToolbarVisible,
+                builder: (context, uuToolbarVisible, _) => Obx(() =>
+                    _ffi.inputModel.relativeMouseMode.value ||
+                            (_uuCustomUi && !uuToolbarVisible)
+                        ? const Offstage()
+                        : _ffi.ffiModel.pi.isSet.isTrue
+                            ? Overlay(initialEntries: [
+                                OverlayEntry(builder: remoteToolbar)
+                              ])
+                            : remoteToolbar(context)),
+              ),
               _ffi.ffiModel.pi.isSet.isFalse ? emptyOverlay() : Offstage(),
             ],
           ),
+          if (_uuCustomUi && kWindowId != null)
+            Obx(() => stateGlobal.fullscreen.isTrue
+                ? UuFullscreenTopBar(
+                    page: widget,
+                    onExit: () =>
+                        WindowController.fromWindowId(kWindowId!).close(),
+                  )
+                : const Offstage()),
         ],
       );
     }

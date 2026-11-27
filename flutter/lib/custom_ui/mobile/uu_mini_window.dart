@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/models/model.dart';
 
+import '../design/uu_tokens.dart';
 import '../uu_defaults.dart';
 import 'uu_mobile_home.dart';
 
@@ -47,6 +48,7 @@ class _UuMiniWindowPageState extends State<UuMiniWindowPage> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     final media = MediaQuery.of(context);
     final size = media.size;
     final winW = (size.width * 0.46).clamp(160.0, 260.0);
@@ -58,7 +60,7 @@ class _UuMiniWindowPageState extends State<UuMiniWindowPage> {
     final defaultPos = Offset(maxX, maxY - 70);
     final pos = _offset ?? defaultPos;
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F7),
+      backgroundColor: UuColors.background,
       body: Stack(
         children: [
           const UuMobileHome(),
@@ -158,7 +160,7 @@ class _MiniRemoteView extends StatelessWidget {
                   hostname,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
                 ),
               ),
             ),

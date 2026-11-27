@@ -7,10 +7,15 @@ import 'package:flutter_hbb/mobile/pages/remote_page.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 
+import '../design/uu_tokens.dart';
 import '../theme.dart';
 import '../uu_peer.dart';
 import '../uu_session_intent.dart';
 import '../uu_wallpaper.dart';
+import '../widgets/uu_components.dart';
+import '../widgets/uu_feedback.dart';
+import '../widgets/uu_platform_icon.dart';
+import '../widgets/uu_rename_dialog.dart';
 
 /// UU 远程风格的设备详情页：预览图 + 进入桌面 + 快捷工具。
 class UuDeviceDetailPage extends StatefulWidget {
@@ -23,7 +28,7 @@ class UuDeviceDetailPage extends StatefulWidget {
 }
 
 class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
-  static const _bg = Color(0xFFF2F3F7);
+  Color get _bg => UuColors.background;
 
   late Peer _peer;
   Timer? _onlineTimer;
@@ -73,19 +78,8 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
 
   String get _name => uuPeerName(_peer);
 
-  IconData get _brandIcon {
-    final p = _peer.platform.toLowerCase();
-    if (p.contains('mac') ||
-        p.contains('ios') ||
-        p.contains('iphone') ||
-        p.contains('ipad')) {
-      return Icons.apple;
-    }
-    if (p.contains('win')) return Icons.desktop_windows;
-    if (p.contains('android')) return Icons.android;
-    if (p.contains('linux')) return Icons.computer;
-    return Icons.devices;
-  }
+  bool get _inAddressBook =>
+      gFFI.abModel.currentAbPeers.any((p) => p.id == _peer.id);
 
   List<Color> get _heroColors {
     final p = _peer.platform.toLowerCase();
@@ -106,6 +100,7 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Scaffold(
       backgroundColor: _bg,
       body: SafeArea(
@@ -120,6 +115,18 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
                   _hero(),
                   const SizedBox(height: 14),
                   _actionRow(),
+                  const SizedBox(height: 14),
+                  _infoCard(),
+                  const SizedBox(height: 20),
+                  Center(
+                    child: UuPillButton(
+                      label: translate('Delete device'),
+                      icon: Icons.delete_outline,
+                      filled: false,
+                      danger: true,
+                      onPressed: () => unawaited(_deleteDevice()),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -139,24 +146,52 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
             onTap: () => Navigator.of(context).maybePop(),
           ),
           const SizedBox(width: 10),
-          _StatusPill(online: _online),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              _name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: UuTheme.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: UuTheme.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Icon(
+                      UuPeerPlatformIcon.iconFor(_peer.platform),
+                      size: 13,
+                      color: UuTheme.textSecondary,
+                    ),
+                    if (_peer.platform.isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _peer.platform,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: UuTheme.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 8),
+                    _StatusPill(online: _online),
+                  ],
+                ),
+              ],
             ),
           ),
-          const Spacer(),
           IconButton(
             onPressed: _showMoreMenu,
-            icon: const Icon(Icons.more_vert, color: UuTheme.textPrimary),
+            icon: Icon(Icons.more_vert, color: UuTheme.textPrimary),
           ),
         ],
       ),
@@ -184,7 +219,7 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
           children: [
             Center(
               child: Icon(
-                _brandIcon,
+                UuPeerPlatformIcon.iconFor(_peer.platform),
                 size: 96,
                 color: Colors.white.withOpacity(0.22),
               ),
@@ -210,7 +245,7 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _online ? '进入桌面' : '设备已离线',
+                    _online ? translate('Enter desktop') : translate('Device offline'),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 21,
@@ -233,25 +268,25 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
 
   Widget _actionRow() {
     final actions = <(IconData, String, VoidCallback)>[
-      (Icons.drive_folder_upload_outlined, '文件传输', _openFileTransfer),
-      (Icons.play_circle_outline, '观看模式', _openViewOnly),
-      (Icons.terminal_rounded, '终端', _openTerminal),
-      (Icons.grid_view_rounded, '更多', _openMoreTools),
+      (Icons.desktop_windows_outlined, translate('Enter desktop'), _enterDesktop),
+      (Icons.swap_horiz, translate('File transfer'), _openFileTransfer),
+      (Icons.play_circle_outline, translate('View only'), _openViewOnly),
+      (Icons.terminal, translate('Terminal'), _openTerminal),
     ];
     return Container(
       height: 86,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: UuColors.surface,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
         children: [
           for (var i = 0; i < actions.length; i++) ...[
             if (i > 0)
-              const SizedBox(
+              SizedBox(
                 height: 34,
-                child: VerticalDivider(width: 1, color: Color(0xFFEFF1F5)),
+                child: VerticalDivider(width: 1, color: UuColors.divider),
               ),
             Expanded(
               child: InkWell(
@@ -264,7 +299,7 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
                     const SizedBox(height: 7),
                     Text(
                       actions[i].$2,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: UuTheme.textPrimary,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -280,8 +315,125 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
     );
   }
 
+  Widget _infoCard() {
+    return UuCard(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Column(
+        children: [
+          _infoRow(
+            translate('Device ID'),
+            _peer.id,
+            trailing: IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: translate('Copy ID'),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _peer.id));
+                uuToast(translate('Device ID copied'));
+              },
+              icon: Icon(Icons.copy_rounded,
+                  size: 18, color: UuColors.textSecondary),
+            ),
+          ),
+          _infoDivider(),
+          _infoRow(
+            translate('Alias'),
+            _peer.alias.isEmpty ? translate('Not set') : _peer.alias,
+            trailing: IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: translate('Rename'),
+              onPressed: _rename,
+              icon: Icon(Icons.edit_outlined,
+                  size: 18, color: UuColors.textSecondary),
+            ),
+          ),
+          if (_peer.platform.isNotEmpty) ...[
+            _infoDivider(),
+            _infoRow(translate('Platform'), _peer.platform),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value, {Widget? trailing}) {
+    return SizedBox(
+      height: 46,
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: UuColors.textSecondary,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: UuColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _infoDivider() => Divider(
+        height: 0.5,
+        thickness: 0.5,
+        color: UuColors.divider,
+      );
+
+  Future<void> _rename() async {
+    final renamed = await showUuRenameDevice(
+      context,
+      id: _peer.id,
+      currentAlias: _peer.alias,
+    );
+    if (renamed != null && mounted) {
+      _peer.alias = renamed;
+      setState(() {});
+    }
+  }
+
+  Future<void> _deleteDevice() async {
+    final inAddressBook = _inAddressBook;
+    final ok = await showUuConfirm(
+      context,
+      title: translate('Delete device'),
+      message: inAddressBook
+          ? translate('This will remove {$_name} from your account devices; you will need to add it again.')
+          : translate('This will remove {$_name} from recent connections.'),
+      confirmText: translate('Delete'),
+      danger: true,
+    );
+    if (!ok || !mounted) return;
+    var deleted = false;
+    if (inAddressBook) {
+      deleted = await gFFI.abModel.deletePeers([_peer.id]);
+    } else {
+      await bind.mainRemovePeer(id: _peer.id);
+      deleted = true;
+    }
+    if (!mounted) return;
+    if (deleted) {
+      uuToast(translate('Deleted'));
+      Navigator.of(context).maybePop();
+    } else {
+      uuToast(translate('Delete failed. Please try again later.'));
+    }
+  }
+
   void _offlineTip() {
-    showToast('设备当前离线');
+    uuToast(translate('Device is offline'));
   }
 
   Future<void> _enterDesktop() async {
@@ -345,26 +497,19 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
       _offlineTip();
       return;
     }
-    final verb = action == UuSessionIntent.restart ? '重启' : '关机';
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('$verb设备'),
-        content: Text('确定要$verb「$_name」吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE5484D)),
-            child: Text(verb),
-          ),
-        ],
-      ),
+    final isRestart = action == UuSessionIntent.restart;
+    final ok = await showUuConfirm(
+      context,
+      title: isRestart
+          ? translate('Restart device')
+          : translate('Shut down device'),
+      message: isRestart
+          ? translate('Are you sure you want to restart {$_name}?')
+          : translate('Are you sure you want to shut down {$_name}?'),
+      confirmText: isRestart ? translate('Restart') : translate('Shut down'),
+      danger: true,
     );
-    if (ok != true || !mounted) {
+    if (!ok || !mounted) {
       return;
     }
     UuSessionIntent.schedule(_peer.id, action);
@@ -374,7 +519,7 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
   void _showMoreMenu() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: UuColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -383,17 +528,25 @@ class _UuDeviceDetailPageState extends State<UuDeviceDetailPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              leading: const Icon(Icons.grid_view, size: 22),
+              title: Text(translate('More tools')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _openMoreTools();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.copy_rounded, size: 22),
-              title: const Text('复制设备 ID'),
+              title: Text(translate('Copy device ID')),
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 Clipboard.setData(ClipboardData(text: _peer.id));
-                showToast('已复制设备 ID');
+                uuToast(translate('Device ID copied'));
               },
             ),
             ListTile(
               leading: const Icon(Icons.refresh_rounded, size: 22),
-              title: const Text('刷新状态'),
+              title: Text(translate('Refresh status')),
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 _queryOnline();
@@ -414,14 +567,15 @@ class _UuMoreToolsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    UuColors.apply(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF2F3F7),
+      backgroundColor: UuColors.background,
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: UuColors.surface,
         foregroundColor: UuTheme.textPrimary,
         elevation: 0,
         centerTitle: true,
-        title: const Text('更多工具'),
+        title: Text(translate('More tools')),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -429,23 +583,23 @@ class _UuMoreToolsPage extends StatelessWidget {
           Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: UuColors.surface,
               borderRadius: BorderRadius.circular(18),
             ),
             child: Column(
               children: [
-                _row(context, Icons.drive_folder_upload_outlined, '文件传输',
+                _row(context, Icons.swap_horiz, translate('File transfer'),
                     state._openFileTransfer),
                 _divider(),
-                _row(context, Icons.play_circle_outline, '观看模式',
+                _row(context, Icons.play_circle_outline, translate('View only'),
                     state._openViewOnly),
                 _divider(),
-                _row(context, Icons.terminal_rounded, '终端', state._openTerminal),
+                _row(context, Icons.terminal, translate('Terminal'), state._openTerminal),
                 _divider(),
-                _row(context, Icons.restart_alt_rounded, '重启',
+                _row(context, Icons.restart_alt_rounded, translate('Restart'),
                     () => state._confirmPower(UuSessionIntent.restart)),
                 _divider(),
-                _row(context, Icons.power_settings_new_rounded, '关机',
+                _row(context, Icons.power_settings_new_rounded, translate('Shut down'),
                     () => state._confirmPower(UuSessionIntent.shutdown)),
               ],
             ),
@@ -468,27 +622,27 @@ class _UuMoreToolsPage extends StatelessWidget {
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   color: UuTheme.textPrimary,
                   fontSize: 17,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right,
-                size: 22, color: Color(0xFFC7CBD3)),
+            Icon(Icons.chevron_right,
+                size: 22, color: UuColors.textTertiary),
           ],
         ),
       ),
     );
   }
 
-  Widget _divider() => const Divider(
+  Widget _divider() => Divider(
         height: 0.5,
         thickness: 0.5,
         indent: 56,
         endIndent: 16,
-        color: Color(0xFFEDEFF3),
+        color: UuColors.divider,
       );
 }
 
@@ -501,7 +655,7 @@ class _RoundIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: UuColors.surface,
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
@@ -522,8 +676,7 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        online ? const Color(0xFF16A34A) : const Color(0xFF9CA3AF);
+    final color = online ? UuColors.success : UuColors.textTertiary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
@@ -540,7 +693,7 @@ class _StatusPill extends StatelessWidget {
           ),
           const SizedBox(width: 5),
           Text(
-            online ? '在线' : '离线',
+            online ? translate('Online') : translate('Offline'),
             style: TextStyle(
               color: color,
               fontSize: 12,

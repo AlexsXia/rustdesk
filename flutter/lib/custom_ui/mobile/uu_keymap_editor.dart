@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_hbb/common.dart' hide Dialog;
+import 'package:flutter_hbb/common.dart' show translate;
 import 'package:flutter_hbb/models/model.dart';
 
 import '../uu_keymap.dart';
+import '../widgets/uu_feedback.dart';
 import 'uu_keymap_picker.dart';
 
 /// 全屏编辑按键方案：拖动按键调整位置，可增删按键。
@@ -42,7 +43,7 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
     }
     if (!mounted) return;
     Navigator.of(context).pop(true);
-    showToast(serverId != null ? '方案已保存并同步到服务器' : '方案已保存到本机');
+    uuToast(serverId != null ? translate('Profile saved and synced to the server') : translate('Profile saved locally'));
   }
 
   Future<void> _addKey() async {
@@ -75,30 +76,19 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
     if (index == null || index >= _profile.keys.length) return;
     final button = _profile.keys[index];
     final controller = TextEditingController(text: button.label);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('按键名称'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: '显示名称',
-            hintText: '留空则自动显示：${button.displayLabel}',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('确定'),
-          ),
-        ],
+    final name = await showUuDialog<String>(
+      context,
+      title: translate('Key name'),
+      content: UuTextField(
+        controller: controller,
+        autofocus: true,
+        hint: translate('Leave empty to show: {${button.displayLabel}}'),
       ),
+      actions: [
+        uuDialogTextButton(translate('Cancel'), () => Navigator.of(context).pop()),
+        uuDialogFilledButton(
+            translate('OK'), () => Navigator.of(context).pop(controller.text.trim())),
+      ],
     );
     if (name == null || !mounted) return;
     setState(() => button.label = name);
@@ -143,8 +133,8 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
         builder: (_, __) {
           final image = widget.ffi.imageModel.image;
           if (image == null) {
-            return const Center(
-              child: Text('画面加载中…', style: TextStyle(color: Colors.white54)),
+            return Center(
+              child: Text(translate('Loading screen...'), style: TextStyle(color: Colors.white54)),
             );
           }
           return Center(
@@ -160,7 +150,10 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
 
   Widget _editorButton(int index, double width, double height) {
     final button = _profile.keys[index];
-    final size = button.size.clamp(36.0, 80.0).toDouble();
+    final isJoystick = button.kind == UuKeyKind.joystick;
+    final size = button.size
+        .clamp(isJoystick ? 96.0 : 36.0, isJoystick ? 160.0 : 80.0)
+        .toDouble();
     final maxX = (width - size).clamp(0.0, double.infinity);
     final maxY = (height - size).clamp(0.0, double.infinity);
     final left = (button.x * width - size / 2).clamp(0.0, maxX);
@@ -218,7 +211,7 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
             children: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('取消', style: TextStyle(color: Colors.white)),
+                child: Text(translate('Cancel'), style: TextStyle(color: Colors.white)),
               ),
               Expanded(
                 child: Text(
@@ -232,7 +225,7 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
               TextButton(
                 onPressed: _saving ? null : _save,
                 child: Text(
-                  _saving ? '保存中…' : '保存',
+                  _saving ? translate('Saving...') : translate('Save'),
                   style: const TextStyle(
                     color: Color(0xFF3B6BF6),
                     fontWeight: FontWeight.w600,
@@ -263,24 +256,24 @@ class _UuKeymapEditorPageState extends State<UuKeymapEditorPage> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           child: Row(
             children: [
-              _bottomAction(Icons.add, '添加按键', _addKey),
+              _bottomAction(Icons.add, translate('Add key'), _addKey),
               const SizedBox(width: 10),
               if (hasSelection) ...[
-                _bottomAction(Icons.tune, '修改', _editSelected),
+                _bottomAction(Icons.tune, translate('Edit'), _editSelected),
                 const SizedBox(width: 10),
-                _bottomAction(Icons.badge_outlined, '名称', _renameSelected),
+                _bottomAction(Icons.badge_outlined, translate('Name'), _renameSelected),
                 const SizedBox(width: 10),
                 _bottomAction(
                   Icons.delete_outline,
-                  '删除',
+                  translate('Delete'),
                   _deleteSelected,
                   color: const Color(0xFFFF453A),
                 ),
               ],
               const Spacer(),
               if (!hasSelection)
-                const Text(
-                  '拖动按键调整位置',
+                Text(
+                  translate('Drag keys to adjust their positions'),
                   style: TextStyle(color: Color(0xCCFFFFFF), fontSize: 12),
                 ),
             ],

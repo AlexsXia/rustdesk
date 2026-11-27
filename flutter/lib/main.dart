@@ -26,6 +26,7 @@ import 'package:window_manager/window_manager.dart';
 import 'common.dart';
 import 'consts.dart';
 import 'custom_ui/uu_defaults.dart';
+import 'custom_ui/widgets/uu_feedback.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
 import 'mobile/widgets/deploy_dialog.dart';
@@ -127,6 +128,7 @@ Future<void> initEnv(String appType) async {
   await initGlobalFFI();
   await applyUuServerDefaults();
   await applyUuInputDefaults();
+  initUuFeedback();
   // await Firebase.initializeApp();
   _registerEventHandler();
   // Update the system theme.

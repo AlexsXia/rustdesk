@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_hbb/common.dart' show translate;
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/utils/http_service.dart' as http;
 
@@ -14,7 +15,7 @@ final ValueNotifier<int> uuKeymapRevision = ValueNotifier<int>(0);
 /// “一键隐藏所有按键”生效期间，叠加层只保留隐藏按钮本身。
 final ValueNotifier<bool> uuKeymapHidden = ValueNotifier<bool>(false);
 
-enum UuKeyKind { keys, mouse, scroll, action }
+enum UuKeyKind { keys, mouse, scroll, action, joystick }
 
 class UuKeyButton {
   UuKeyButton({
@@ -59,6 +60,8 @@ class UuKeyButton {
         return scroll != 0;
       case UuKeyKind.action:
         return action.isNotEmpty;
+      case UuKeyKind.joystick:
+        return keys.length == 4;
     }
   }
 
@@ -70,9 +73,11 @@ class UuKeyButton {
       case UuKeyKind.mouse:
         return uuMouseLabel(mouse);
       case UuKeyKind.scroll:
-        return scroll >= 0 ? '上滚轮' : '下滚轮';
+        return scroll >= 0 ? translate('Scroll up') : translate('Scroll down');
       case UuKeyKind.action:
-        return action == 'hide' ? '隐藏按键' : '键盘输入';
+        return action == 'hide' ? translate('Hide keys') : translate('Keyboard input');
+      case UuKeyKind.joystick:
+        return translate('Joystick');
     }
   }
 
@@ -186,7 +191,7 @@ class UuKeyProfile {
       id: id,
       name: value['name'] is String && (value['name'] as String).isNotEmpty
           ? value['name'] as String
-          : '未命名方案',
+          : translate('Untitled profile'),
       keys: keys,
       serverId:
           value['serverId'] is num ? (value['serverId'] as num).toInt() : null,
@@ -257,12 +262,14 @@ UuKeyProfile uuNewKeyProfile(String name) => UuKeyProfile(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       name: name,
       keys: [
-        UuKeyButton(kind: UuKeyKind.keys, keys: ['VK_W'], x: 0.18, y: 0.52),
-        UuKeyButton(kind: UuKeyKind.keys, keys: ['VK_A'], x: 0.09, y: 0.63),
-        UuKeyButton(kind: UuKeyKind.keys, keys: ['VK_S'], x: 0.18, y: 0.74),
-        UuKeyButton(kind: UuKeyKind.keys, keys: ['VK_D'], x: 0.27, y: 0.63),
         UuKeyButton(
-            label: '跳跃',
+            kind: UuKeyKind.joystick,
+            keys: ['VK_W', 'VK_A', 'VK_S', 'VK_D'],
+            x: 0.2,
+            y: 0.63,
+            size: 130),
+        UuKeyButton(
+            label: translate('Jump'),
             kind: UuKeyKind.keys,
             keys: ['VK_SPACE'],
             x: 0.82,
@@ -293,7 +300,7 @@ UuKeyProfile? uuKeyProfileFromServer(Object? value) {
   final name = value['name'];
   return UuKeyProfile(
     id: 'srv$serverId',
-    name: name is String && name.isNotEmpty ? name : '共享方案',
+    name: name is String && name.isNotEmpty ? name : translate('Shared profile'),
     keys: keys,
     serverId: serverId.toInt(),
     author: value['author'] is String ? value['author'] as String : '',
@@ -430,17 +437,17 @@ String uuKeyLabel(String key) {
 String uuMouseLabel(String mouse) {
   switch (mouse) {
     case 'left':
-      return '左键';
+      return translate('Left button');
     case 'right':
-      return '右键';
+      return translate('Right button');
     case 'middle':
-      return '中键';
+      return translate('Middle button');
     case 'back':
-      return '上侧键';
+      return translate('Mouse back button');
     case 'forward':
-      return '下侧键';
+      return translate('Mouse forward button');
     default:
-      return '鼠标';
+      return translate('Mouse');
   }
 }
 

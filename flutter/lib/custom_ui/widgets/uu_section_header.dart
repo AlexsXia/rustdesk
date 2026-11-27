@@ -14,7 +14,7 @@ class UuSectionHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             color: UuTheme.textPrimary,
             fontSize: 18,
             fontWeight: FontWeight.w600,

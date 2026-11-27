@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common.dart' show translate;
 
 import '../uu_keymap.dart';
 
@@ -54,7 +55,10 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
     _action = initial?.action ?? '';
     _tab = switch (_kind) {
       UuKeyKind.keys => _PickTab.keyboard,
-      UuKeyKind.mouse || UuKeyKind.scroll => _PickTab.mouse,
+      UuKeyKind.mouse ||
+      UuKeyKind.scroll ||
+      UuKeyKind.joystick =>
+        _PickTab.mouse,
       UuKeyKind.action => _PickTab.function,
     };
   }
@@ -69,6 +73,8 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
         return _scroll != 0;
       case UuKeyKind.action:
         return _action.isNotEmpty;
+      case UuKeyKind.joystick:
+        return _keys.length == 4;
     }
   }
 
@@ -96,7 +102,7 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
         _keys.remove(key);
       } else if (_keys.length >= 4) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('最多添加 4 个按键')),
+          SnackBar(content: Text(translate('You can add up to 4 keys'))),
         );
       } else {
         _keys.add(key);
@@ -128,19 +134,29 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
     });
   }
 
+  void _selectJoystick(List<String> keys) {
+    setState(() {
+      _resetBinding();
+      _kind = UuKeyKind.joystick;
+      _keys = List.of(keys);
+    });
+  }
+
   void _save() {
     if (!_canSave) return;
     final initial = widget.initial;
     final button = UuKeyButton(
       label: initial?.label ?? '',
       kind: _kind,
-      keys: _kind == UuKeyKind.keys ? List.of(_keys) : const [],
+      keys: _kind == UuKeyKind.keys || _kind == UuKeyKind.joystick
+          ? List.of(_keys)
+          : const [],
       mouse: _kind == UuKeyKind.mouse ? _mouse : '',
       scroll: _kind == UuKeyKind.scroll ? _scroll : 0,
       action: _kind == UuKeyKind.action ? _action : '',
       x: initial?.x ?? 0.5,
       y: initial?.y ?? 0.38,
-      size: initial?.size ?? 54,
+      size: initial?.size ?? (_kind == UuKeyKind.joystick ? 120 : 54),
     );
     Navigator.of(context).pop(button);
   }
@@ -179,11 +195,11 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
                   color: Colors.white, size: 24),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                '点击下方按键 添加2~4个对应按键',
+                translate('Tap keys below to add 2-4 corresponding keys'),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 style: TextStyle(color: _kMuted, fontSize: 12),
@@ -193,9 +209,9 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
           InkWell(
             onTap: _clear,
             borderRadius: BorderRadius.circular(8),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              child: Text('清空',
+              child: Text(translate('Clear'),
                   style: TextStyle(color: Colors.white, fontSize: 14)),
             ),
           ),
@@ -210,7 +226,7 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: Text(
-                '保存',
+                translate('Save'),
                 style: TextStyle(
                   color: _canSave ? Colors.white : _kMuted,
                   fontSize: 14,
@@ -255,9 +271,11 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
       case UuKeyKind.mouse:
         label = uuMouseLabel(_mouse);
       case UuKeyKind.scroll:
-        label = _scroll >= 0 ? '上滚轮' : '下滚轮';
+        label = _scroll >= 0 ? translate('Scroll up') : translate('Scroll down');
       case UuKeyKind.action:
-        label = _action == 'hide' ? '一键隐藏所有按键' : '键盘输入';
+        label = _action == 'hide' ? translate('Hide all keys') : translate('Keyboard input');
+      case UuKeyKind.joystick:
+        label = translate('Joystick {${_keys.map(uuKeyLabel).join('/')}}');
       case UuKeyKind.keys:
         label = '';
     }
@@ -295,7 +313,7 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
         border: Border.all(color: const Color(0x66FFFFFF)),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Text('请添加',
+      child: Text(translate('Please add'),
           style: TextStyle(color: _kMuted, fontSize: 13)),
     );
   }
@@ -313,9 +331,9 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Text(
                       switch (tab) {
-                        _PickTab.keyboard => '主键盘',
-                        _PickTab.mouse => '鼠标按键与轮盘',
-                        _PickTab.function => '功能键',
+                        _PickTab.keyboard => translate('Main keyboard'),
+                        _PickTab.mouse => translate('Mouse buttons & wheel'),
+                        _PickTab.function => translate('Function keys'),
                       },
                       style: TextStyle(
                         color: _tab == tab ? Colors.white : _kMuted,
@@ -479,8 +497,8 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
         ),
         child: Row(
           children: [
-            Expanded(child: _modeHalf('控制键', !_numeric)),
-            Expanded(child: _modeHalf('数字键', _numeric)),
+            Expanded(child: _modeHalf(translate('Control keys'), !_numeric)),
+            Expanded(child: _modeHalf(translate('Number keys'), _numeric)),
           ],
         ),
       ),
@@ -539,7 +557,7 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _SectionTitle('轮盘'),
+          _SectionTitle(translate('Wheel')),
           Wrap(
             spacing: 24,
             runSpacing: 16,
@@ -550,26 +568,38 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
             ],
           ),
           const SizedBox(height: 22),
-          const _SectionTitle('鼠标按键'),
+          _SectionTitle(translate('Joystick (drag to steer)')),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _mouseTile('左键', 'left'),
-              _mouseTile('右键', 'right'),
-              _mouseTile('中键', 'middle'),
-              _mouseTile('上侧键', 'back'),
-              _mouseTile('下侧键', 'forward'),
+              _joystickTile(
+                  translate('WASD joystick'), const ['VK_W', 'VK_A', 'VK_S', 'VK_D']),
+              _joystickTile(translate('Arrow-key joystick'),
+                  const ['VK_UP', 'VK_LEFT', 'VK_DOWN', 'VK_RIGHT']),
             ],
           ),
           const SizedBox(height: 22),
-          const _SectionTitle('滚轮'),
+          _SectionTitle(translate('Mouse buttons')),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _scrollTile('上滚轮', 1),
-              _scrollTile('下滚轮', -1),
+              _mouseTile(translate('Left button'), 'left'),
+              _mouseTile(translate('Right button'), 'right'),
+              _mouseTile(translate('Middle button'), 'middle'),
+              _mouseTile(translate('Mouse back button'), 'back'),
+              _mouseTile(translate('Mouse forward button'), 'forward'),
+            ],
+          ),
+          const SizedBox(height: 22),
+          _SectionTitle(translate('Scroll wheel')),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _scrollTile(translate('Scroll up'), 1),
+              _scrollTile(translate('Scroll down'), -1),
             ],
           ),
         ],
@@ -602,6 +632,12 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
     );
   }
 
+  Widget _joystickTile(String label, List<String> keys) {
+    final selected = _kind == UuKeyKind.joystick &&
+        _keys.join(',') == keys.join(',');
+    return _choiceTile(label, selected, () => _selectJoystick(keys));
+  }
+
   Widget _mouseTile(String label, String mouse) {
     final selected = _kind == UuKeyKind.mouse && _mouse == mouse;
     return _choiceTile(label, selected, () => _selectMouse(mouse));
@@ -632,13 +668,13 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
 
   Widget _functionTab() {
     final items = <(String, String, String, IconData, bool)>[
-      ('hide', '一键隐藏所有按键', '隐藏屏幕按键，只保留此按钮', Icons.visibility_off_outlined, true),
-      ('keyboard', '键盘输入', '打开手机键盘输入文字', Icons.keyboard_outlined, true),
-      ('', '界面快捷放大', '双指快捷缩放画面', Icons.zoom_in, false),
-      ('', '鼠标右键模式', '长按画面触发右键', Icons.mouse_outlined, false),
-      ('', '轮盘功能夹', '把常用按键收进轮盘', Icons.album_outlined, false),
-      ('', '列表功能夹', '把常用按键收进列表', Icons.list_alt_outlined, false),
-      ('', '宏按键', '按顺序执行一串按键', Icons.auto_awesome_outlined, false),
+      ('hide', translate('Hide all keys'), translate('Hide on-screen keys and keep only this button'), Icons.visibility_off_outlined, true),
+      ('keyboard', translate('Keyboard input'), translate('Open the phone keyboard to type'), Icons.keyboard_outlined, true),
+      ('', translate('Quick zoom'), translate('Pinch to zoom the screen'), Icons.zoom_in, false),
+      ('', translate('Right-click mode'), translate('Long press the screen for right-click'), Icons.mouse_outlined, false),
+      ('', translate('Key wheel'), translate('Collect frequently used keys in a wheel'), Icons.album_outlined, false),
+      ('', translate('Key list'), translate('Collect frequently used keys in a list'), Icons.list_alt_outlined, false),
+      ('', translate('Macro key'), translate('Run a sequence of keys in order'), Icons.auto_awesome_outlined, false),
     ];
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
@@ -662,7 +698,7 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
       onTap: enabled
           ? () => _selectAction(action)
           : () => ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('该功能暂未支持')),
+                SnackBar(content: Text(translate('This feature is not supported yet'))),
               ),
       borderRadius: BorderRadius.circular(12),
       child: Opacity(
@@ -692,8 +728,8 @@ class _UuKeyPickerPageState extends State<UuKeyPickerPage> {
                 ),
               ),
               if (!enabled)
-                const Text('即将支持',
-                    style: TextStyle(color: _kMuted, fontSize: 11))
+                Text(translate('Coming soon'),
+                    style: TextStyle(color: _kMuted, fontSize: 12))
               else if (selected)
                 const Icon(Icons.check_circle, size: 20, color: Colors.white),
             ],
