@@ -2217,6 +2217,11 @@ pub fn current_resolution(name: &str) -> ResultType<Resolution> {
     bail!("Failed to find current resolution for {}", name);
 }
 
+/// Path of the desktop picture, used for device previews.
+pub fn get_wallpaper_path() -> Option<String> {
+    wallpaper::get().ok().filter(|path| !path.is_empty())
+}
+
 #[cfg(test)]
 mod xrandr_tests {
     use super::*;

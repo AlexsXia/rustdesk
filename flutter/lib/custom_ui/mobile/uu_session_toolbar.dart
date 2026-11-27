@@ -41,32 +41,36 @@ class _UuSessionToolbarState extends State<UuSessionToolbar> {
       ffi.connType == ConnType.defaultConn &&
       ffi.ffiModel.permissions['audio'] != false;
 
-  void _sendKey(String name, {bool ctrl = false, bool command = false}) {
+  void _sendKey(String name,
+      {bool ctrl = false, bool alt = false, bool command = false}) {
     bind.sessionInputKey(
       sessionId: ffi.sessionId,
       name: name,
       down: false,
       press: true,
-      alt: false,
+      alt: alt,
       ctrl: ctrl,
       shift: false,
       command: command,
     );
   }
 
-  // macOS 调度中心是 Control+↑，Windows 任务视图是 Win+Tab。
+  // Windows 任务视图是 Win+Tab。macOS 的 Mission Control（Ctrl+↑）在不少机器上被关闭，
+  // 而“应用窗口”（Ctrl+↓）是默认开启的，用它展示当前应用的所有窗口。
   void _showAllWindows() {
     if (_isMac) {
-      _sendKey('VK_UP', ctrl: true);
+      _sendKey('VK_DOWN', ctrl: true);
     } else {
       _sendKey('VK_TAB', command: true);
     }
   }
 
-  // macOS 显示桌面是 F11，Windows 是 Win+D。
+  // Windows 显示桌面是 Win+D。macOS 的 F11 显示桌面可被系统设置关闭，
+  // 改为隐藏当前应用和其它应用，效果同样露出桌面。
   void _showDesktop() {
     if (_isMac) {
-      _sendKey('VK_F11');
+      _sendKey('VK_H', command: true);
+      _sendKey('VK_H', command: true, alt: true);
     } else {
       _sendKey('VK_D', command: true);
     }
@@ -144,20 +148,60 @@ class _UuSessionToolbarState extends State<UuSessionToolbar> {
   }
 
   Widget _item(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 23, color: _kBarIcon),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _kBarLabel, fontSize: 12),
+    return _UuToolbarItem(icon: icon, label: label, onTap: onTap);
+  }
+}
+
+class _UuToolbarItem extends StatefulWidget {
+  const _UuToolbarItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_UuToolbarItem> createState() => _UuToolbarItemState();
+}
+
+class _UuToolbarItemState extends State<_UuToolbarItem> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.92 : 1,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: _pressed ? const Color(0x1FFFFFFF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
           ),
-        ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, size: 23, color: _kBarIcon),
+              const SizedBox(height: 4),
+              Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: _kBarLabel, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

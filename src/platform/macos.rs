@@ -2137,6 +2137,37 @@ pub(crate) fn get_bundle_id() -> Option<String> {
     }
 }
 
+/// Path of the desktop picture on the main display, used for device previews.
+pub fn get_wallpaper_path() -> Option<String> {
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace == nil {
+            return None;
+        }
+        let screen: id = msg_send![class!(NSScreen), mainScreen];
+        if screen == nil {
+            return None;
+        }
+        let url: id = msg_send![workspace, desktopImageURLForScreen: screen];
+        if url == nil {
+            return None;
+        }
+        let path: id = msg_send![url, path];
+        if path == nil {
+            return None;
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![path, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        Some(
+            std::ffi::CStr::from_ptr(utf8)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod update_tests {
     use super::*;

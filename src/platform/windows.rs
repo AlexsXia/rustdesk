@@ -4944,6 +4944,11 @@ pub(super) fn get_pids_with_first_arg_by_wmic<S1: AsRef<str>, S2: AsRef<str>>(
         .unwrap_or_default()
 }
 
+/// Path of the desktop picture, used for device previews.
+pub fn get_wallpaper_path() -> Option<String> {
+    wallpaper::get().ok().filter(|path| !path.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

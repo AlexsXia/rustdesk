@@ -28,6 +28,8 @@ lazy_static::lazy_static! {
 #[cfg(not(any(target_os = "ios")))]
 pub fn start() {
     let _sender = SENDER.lock().unwrap();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    super::wallpaper::start();
 }
 
 #[cfg(not(target_os = "ios"))]

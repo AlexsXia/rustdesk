@@ -20,13 +20,16 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use rand::RngCore;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::Deserialize;
@@ -82,6 +85,11 @@ CREATE TABLE IF NOT EXISTS keymap_profiles (
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_keymap_updated ON keymap_profiles(updated_at);
+CREATE TABLE IF NOT EXISTS wallpapers (
+    device_id  TEXT PRIMARY KEY,
+    data       BLOB NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 ";
 
 #[derive(Clone)]
@@ -966,6 +974,96 @@ async fn keymap_delete(
     Ok(Json(json!({})))
 }
 
+const MAX_WALLPAPER_BYTES: usize = 3 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct WallpaperPush {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    uuid: String,
+    #[serde(default)]
+    data: String,
+}
+
+fn is_jpeg(data: &[u8]) -> bool {
+    data.len() >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
+}
+
+/// Peers upload a downscaled copy of their desktop wallpaper; the uuid check
+/// keeps a device id from being overwritten by someone else.
+async fn wallpaper_push(
+    State(state): State<AppState>,
+    Json(body): Json<WallpaperPush>,
+) -> Result<Json<Value>, ApiError> {
+    if body.id.is_empty() {
+        return Err(ApiError::bad_request("missing device id"));
+    }
+    let data = STANDARD
+        .decode(body.data.as_bytes())
+        .map_err(|_| ApiError::bad_request("invalid wallpaper data"))?;
+    if data.is_empty() || data.len() > MAX_WALLPAPER_BYTES || !is_jpeg(&data) {
+        return Err(ApiError::bad_request("invalid wallpaper image"));
+    }
+    let WallpaperPush { id, uuid, .. } = body;
+    with_db(&state, move |conn| {
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT uuid FROM devices WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match stored.as_deref() {
+            Some("") => {}
+            Some(stored) if stored != uuid => {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "device uuid mismatch",
+                ));
+            }
+            Some(_) => {}
+            None => return Err(ApiError::new(StatusCode::NOT_FOUND, "device not found")),
+        }
+        conn.execute(
+            "INSERT INTO wallpapers(device_id, data, updated_at) VALUES(?1, ?2, ?3)
+             ON CONFLICT(device_id) DO UPDATE SET
+                 data = excluded.data, updated_at = excluded.updated_at",
+            params![id, data, now()],
+        )?;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(json!({})))
+}
+
+async fn wallpaper_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, ApiError> {
+    let data = with_db(&state, move |conn| {
+        auth_user(conn, &headers)?;
+        conn.query_row(
+            "SELECT data FROM wallpapers WHERE device_id = ?1",
+            params![id],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "no wallpaper"))
+    })
+    .await?;
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/jpeg"),
+            (axum::http::header::CACHE_CONTROL, "private, max-age=600"),
+        ],
+        data,
+    )
+        .into_response())
+}
+
 async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" })))
 }
@@ -1002,6 +1100,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/peers", get(peers))
         .route("/api/keymap/profiles", get(keymap_list).post(keymap_push))
         .route("/api/keymap/profiles/{id}", delete(keymap_delete))
+        .route(
+            "/api/wallpaper",
+            post(wallpaper_push).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route("/api/wallpaper/{id}", get(wallpaper_get))
         .fallback(not_found)
         .with_state(state);
 
